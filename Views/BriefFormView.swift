@@ -76,6 +76,16 @@ struct BriefFormView: View {
             .buttonStyle(.borderedProminent)
             .tint(.black)
             .disabled(viewModel.isRunning)
+
+            if let errorMessage = viewModel.errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TravelPlannerColor.coral)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(TravelPlannerColor.coral.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
