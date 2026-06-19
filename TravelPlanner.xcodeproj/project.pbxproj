@@ -29,6 +29,11 @@
 		AA0000000000000000000121 /* SharedComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000157 /* SharedComponents.swift */; };
 		AA0000000000000000000122 /* TravelPlannerColor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000158 /* TravelPlannerColor.swift */; };
 		AA0000000000000000000123 /* TravelPlannerFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000159 /* TravelPlannerFormat.swift */; };
+		AA0000000000000000000124 /* AgentRunState.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000160 /* AgentRunState.swift */; };
+		AA0000000000000000000125 /* TripPlanResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000161 /* TripPlanResult.swift */; };
+		AA0000000000000000000126 /* TravelPlannerAPIPayloads.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000162 /* TravelPlannerAPIPayloads.swift */; };
+		AA0000000000000000000127 /* TravelPlannerAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000163 /* TravelPlannerAPIService.swift */; };
+		AA0000000000000000000128 /* TravelPlanningServiceFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000164 /* TravelPlanningServiceFactory.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -56,6 +61,11 @@
 		AA0000000000000000000157 /* SharedComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedComponents.swift; sourceTree = "<group>"; };
 		AA0000000000000000000158 /* TravelPlannerColor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelPlannerColor.swift; sourceTree = "<group>"; };
 		AA0000000000000000000159 /* TravelPlannerFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelPlannerFormat.swift; sourceTree = "<group>"; };
+		AA0000000000000000000160 /* AgentRunState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRunState.swift; sourceTree = "<group>"; };
+		AA0000000000000000000161 /* TripPlanResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripPlanResult.swift; sourceTree = "<group>"; };
+		AA0000000000000000000162 /* TravelPlannerAPIPayloads.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelPlannerAPIPayloads.swift; sourceTree = "<group>"; };
+		AA0000000000000000000163 /* TravelPlannerAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelPlannerAPIService.swift; sourceTree = "<group>"; };
+		AA0000000000000000000164 /* TravelPlanningServiceFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelPlanningServiceFactory.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,6 +111,8 @@
 				AA0000000000000000000143 /* MemoryNote.swift */,
 				AA0000000000000000000144 /* PersistedAgentState.swift */,
 				AA0000000000000000000145 /* TripBrief.swift */,
+				AA0000000000000000000160 /* AgentRunState.swift */,
+				AA0000000000000000000161 /* TripPlanResult.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -110,6 +122,9 @@
 			children = (
 				AA0000000000000000000146 /* TravelPlanningService.swift */,
 				AA0000000000000000000147 /* AgentStateStore.swift */,
+				AA0000000000000000000162 /* TravelPlannerAPIPayloads.swift */,
+				AA0000000000000000000163 /* TravelPlannerAPIService.swift */,
+				AA0000000000000000000164 /* TravelPlanningServiceFactory.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -237,6 +252,11 @@
 				AA0000000000000000000121 /* SharedComponents.swift in Sources */,
 				AA0000000000000000000122 /* TravelPlannerColor.swift in Sources */,
 				AA0000000000000000000123 /* TravelPlannerFormat.swift in Sources */,
+				AA0000000000000000000124 /* AgentRunState.swift in Sources */,
+				AA0000000000000000000125 /* TripPlanResult.swift in Sources */,
+				AA0000000000000000000126 /* TravelPlannerAPIPayloads.swift in Sources */,
+				AA0000000000000000000127 /* TravelPlannerAPIService.swift in Sources */,
+				AA0000000000000000000128 /* TravelPlanningServiceFactory.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -370,6 +390,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Travel Planner";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.travel";
+				INFOPLIST_KEY_TRAVEL_PLANNER_API_BASE_URL = "$(TRAVEL_PLANNER_API_BASE_URL)";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -390,6 +411,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
+				TRAVEL_PLANNER_API_BASE_URL = "http://127.0.0.1:8000";
 			};
 			name = Debug;
 		};
@@ -405,6 +427,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Travel Planner";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.travel";
+				INFOPLIST_KEY_TRAVEL_PLANNER_API_BASE_URL = "$(TRAVEL_PLANNER_API_BASE_URL)";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -425,6 +448,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
+				TRAVEL_PLANNER_API_BASE_URL = "http://127.0.0.1:8000";
 			};
 			name = Release;
 		};

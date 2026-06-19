@@ -11,19 +11,18 @@ final class AgentViewModel: ObservableObject {
     @Published var constraints = "Window seat, no red-eye flights, one free evening, save anything that beats the budget."
     @Published var rememberPreferences = true
     @Published var mood: TripMood = .culture
-    @Published var runStatus = "Idle"
+    @Published private(set) var runState: AgentRunState = .idle
     @Published var steps: [RunStep] = []
     @Published var trips: [TripOption] = []
     @Published var savedTrips: [TripOption] = []
     @Published var memory: [MemoryNote] = []
     @Published var activeTripID: UUID?
-    @Published var isRunning = false
 
     private let planningService: TravelPlanningServicing
     private let stateStore: AgentStateStoring
 
     init(
-        planningService: TravelPlanningServicing = MockTravelPlanningService(),
+        planningService: TravelPlanningServicing = TravelPlanningServiceFactory.makeService(),
         stateStore: AgentStateStoring = UserDefaultsAgentStateStore()
     ) {
         self.planningService = planningService
@@ -38,6 +37,18 @@ final class AgentViewModel: ObservableObject {
 
     var visibleTrips: [TripOption] {
         trips.isEmpty ? savedTrips : trips
+    }
+
+    var runStatus: String {
+        runState.title
+    }
+
+    var isRunning: Bool {
+        runState.isRunning
+    }
+
+    var errorMessage: String? {
+        runState.errorMessage
     }
 
     var currentBrief: TripBrief {
@@ -57,8 +68,7 @@ final class AgentViewModel: ObservableObject {
     func runAgent() async {
         guard !isRunning else { return }
 
-        isRunning = true
-        runStatus = "Running"
+        runState = .running
         trips = []
         steps = makeSteps()
 
@@ -68,15 +78,27 @@ final class AgentViewModel: ObservableObject {
             steps[index].status = .done
         }
 
-        let generated = await planningService.makeTrips(for: currentBrief)
-        trips = generated
-        activeTripID = generated.first?.id
-        if let bestTrip = generated.first {
+        do {
+            let result = try await planningService.makePlan(for: currentBrief)
+            trips = result.trips
+            activeTripID = result.trips.first?.id
+            applyMemory(from: result)
+            runState = .done
+            save()
+        } catch {
+            runState = .failed(error.localizedDescription)
+        }
+    }
+
+    private func applyMemory(from result: TripPlanResult) {
+        if let serviceMemory = result.memory {
+            memory = serviceMemory
+            return
+        }
+
+        if let bestTrip = result.trips.first {
             updateMemory(bestTrip: bestTrip)
         }
-        runStatus = "Done"
-        isRunning = false
-        save()
     }
 
     func saveTrip(_ trip: TripOption) {
@@ -137,7 +159,7 @@ final class AgentViewModel: ObservableObject {
         memory = []
         trips = []
         activeTripID = nil
-        runStatus = "Idle"
+        runState = .idle
         steps = makeSteps()
         stateStore.clear()
     }

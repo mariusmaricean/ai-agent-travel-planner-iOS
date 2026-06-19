@@ -1,16 +1,16 @@
 import Foundation
 
 protocol TravelPlanningServicing: Sendable {
-    func makeTrips(for brief: TripBrief) async -> [TripOption]
+    func makePlan(for brief: TripBrief) async throws -> TripPlanResult
 }
 
 struct MockTravelPlanningService: TravelPlanningServicing, Sendable {
-    func makeTrips(for brief: TripBrief) async -> [TripOption] {
+    func makePlan(for brief: TripBrief) async throws -> TripPlanResult {
         let route = "\(brief.origin) -> \(brief.destination)"
         let baseFare = max(320, (brief.budget * 0.42).rounded())
         let focus = brief.mood.focusItems
 
-        return [
+        let trips = [
             TripOption(
                 name: "Balanced Sprint",
                 route: route,
@@ -48,5 +48,7 @@ struct MockTravelPlanningService: TravelPlanningServicing, Sendable {
                 ]
             )
         ]
+
+        return TripPlanResult(trips: trips, memory: nil)
     }
 }
