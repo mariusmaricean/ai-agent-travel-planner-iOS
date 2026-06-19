@@ -1,10 +1,13 @@
 from app.schemas import MemoryNote, TripPlanRequest, TripPlanResponse
-from app.tools import build_itinerary, search_flights
+from app.tools import TravelPlanningToolRouter, default_tool_router
 
 
-def create_trip_plan(request: TripPlanRequest) -> TripPlanResponse:
-    fares = search_flights(request)
-    trips = build_itinerary(request, fares)
+def create_trip_plan(
+    request: TripPlanRequest,
+    tools: TravelPlanningToolRouter = default_tool_router,
+) -> TripPlanResponse:
+    fares = tools.search_flights(request)
+    trips = tools.build_itinerary(request, fares)
 
     memory = request.memory
     if request.rememberPreferences and trips:
