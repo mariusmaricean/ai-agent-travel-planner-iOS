@@ -13,6 +13,7 @@ struct AgentHomeView: View {
                         BriefFormView(viewModel: viewModel)
                     }
                     .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .top)
                 }
                 .background(TravelPlannerColor.paper.ignoresSafeArea())
                 .navigationTitle("Travel Planner")
@@ -45,6 +46,7 @@ struct AgentHomeView: View {
                         TripsListView(viewModel: viewModel, mode: .results)
                     }
                     .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .top)
                 }
                 .background(TravelPlannerColor.paper.ignoresSafeArea())
                 .navigationTitle("Run")
@@ -61,6 +63,7 @@ struct AgentHomeView: View {
                         MemoryView(viewModel: viewModel)
                     }
                     .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .top)
                 }
                 .background(TravelPlannerColor.paper.ignoresSafeArea())
                 .navigationTitle("Saved")

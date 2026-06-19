@@ -5,11 +5,14 @@ struct HeroView: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            Image("TravelPlannerHero")
-                .resizable()
-                .scaledToFill()
-                .frame(height: 258)
-                .clipped()
+            Color.black.opacity(0.88)
+
+            GeometryReader { proxy in
+                Image("TravelPlannerHero")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+            }
 
             LinearGradient(
                 colors: [.black.opacity(0.68), .black.opacity(0.16), .black.opacity(0.82)],
@@ -50,6 +53,7 @@ struct HeroView: View {
             }
             .padding(16)
         }
+        .frame(maxWidth: .infinity)
         .frame(height: 258)
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .shadow(color: .black.opacity(0.14), radius: 18, y: 12)

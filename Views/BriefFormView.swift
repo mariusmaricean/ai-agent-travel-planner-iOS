@@ -15,29 +15,9 @@ struct BriefFormView: View {
             }
             .pickerStyle(.segmented)
 
-            HStack(spacing: 12) {
-                FieldCard(title: "From") {
-                    TextField("Origin", text: $viewModel.origin)
-                        .textInputAutocapitalization(.words)
-                }
+            routeFields
 
-                FieldCard(title: "To") {
-                    TextField("Destination", text: $viewModel.destination)
-                        .textInputAutocapitalization(.words)
-                }
-            }
-
-            HStack(spacing: 12) {
-                FieldCard(title: "Depart") {
-                    DatePicker("Depart", selection: $viewModel.departDate, displayedComponents: .date)
-                        .labelsHidden()
-                }
-
-                FieldCard(title: "Return") {
-                    DatePicker("Return", selection: $viewModel.returnDate, displayedComponents: .date)
-                        .labelsHidden()
-                }
-            }
+            dateFields
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -98,6 +78,65 @@ struct BriefFormView: View {
             .disabled(viewModel.isRunning)
         }
         .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var routeFields: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                originField
+                destinationField
+            }
+
+            VStack(spacing: 12) {
+                originField
+                destinationField
+            }
+        }
+    }
+
+    private var dateFields: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                departField
+                returnField
+            }
+
+            VStack(spacing: 12) {
+                departField
+                returnField
+            }
+        }
+    }
+
+    private var originField: some View {
+        FieldCard(title: "From") {
+            TextField("Origin", text: $viewModel.origin)
+                .textInputAutocapitalization(.words)
+        }
+    }
+
+    private var destinationField: some View {
+        FieldCard(title: "To") {
+            TextField("Destination", text: $viewModel.destination)
+                .textInputAutocapitalization(.words)
+        }
+    }
+
+    private var departField: some View {
+        FieldCard(title: "Depart") {
+            DatePicker("Depart", selection: $viewModel.departDate, displayedComponents: .date)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var returnField: some View {
+        FieldCard(title: "Return") {
+            DatePicker("Return", selection: $viewModel.returnDate, displayedComponents: .date)
+                .labelsHidden()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
