@@ -13,7 +13,6 @@ This is a SwiftUI-native version of the mobile-first autonomous travel agent pro
 Open `TravelPlanner.xcodeproj` in Xcode, select the `TravelPlanner` scheme, and run it on an iPhone simulator or device.
 
 ## Agent Integration Points
-
 - Replace `makeTrips()` with live tool results from your backend.
 - Route `searchFlights(origin, destination, dates, budget)` to a flight provider function.
 - Route `buildItinerary(fares, constraints, memory)` to your planning/model function.
