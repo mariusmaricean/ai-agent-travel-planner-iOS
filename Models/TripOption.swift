@@ -15,4 +15,11 @@ struct TripOption: Identifiable, Codable, Hashable, Sendable {
     var score: Int
     var meta: String
     var days: [TripDay]
+
+    func matchesSavedTrip(_ trip: TripOption) -> Bool {
+        name == trip.name
+            && route == trip.route
+            && fare == trip.fare
+            && meta == trip.meta
+    }
 }
