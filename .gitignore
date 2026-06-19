@@ -24,6 +24,14 @@ Build/
 __pycache__/
 *.py[cod]
 
+# Local secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
 # CocoaPods / Carthage
 Pods/
 Carthage/Build/

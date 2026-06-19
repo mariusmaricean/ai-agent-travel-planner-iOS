@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Optional
 
+from dotenv import load_dotenv
+
 from app.schemas import MemoryNote, TripDay, TripOption, TripPlanRequest
+
+load_dotenv()
 
 
 @dataclass(frozen=True)
