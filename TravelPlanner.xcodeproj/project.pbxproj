@@ -411,7 +411,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
-				TRAVEL_PLANNER_API_BASE_URL = "";
+				TRAVEL_PLANNER_API_BASE_URL = "http://127.0.0.1:8000";
 			};
 			name = Debug;
 		};
@@ -448,7 +448,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 				TARGETED_DEVICE_FAMILY = 1;
-				TRAVEL_PLANNER_API_BASE_URL = "";
+				TRAVEL_PLANNER_API_BASE_URL = "http://127.0.0.1:8000";
 			};
 			name = Release;
 		};

@@ -7,10 +7,21 @@ This is a SwiftUI-native version of the mobile-first autonomous travel agent pro
 - `TravelPlanner.xcodeproj`: Xcode project with a single SwiftUI iOS app target.
 - `TravelPlannerApp.swift`: complete SwiftUI app shell with trip brief, agent run timeline, saved trips, and UserDefaults-backed memory.
 - `Assets.xcassets/TravelPlannerHero.imageset`: generated travel visual used by the iOS hero.
+- `Backend/`: FastAPI scaffold for the live `POST /trip-plans` endpoint.
 
 ## Run
 
 Open `TravelPlanner.xcodeproj` in Xcode, select the `TravelPlanner` scheme, and run it on an iPhone simulator or device.
+
+To run the backend locally:
+
+```bash
+cd Backend
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
 
 ## Agent Integration Points
 - Set `TRAVEL_PLANNER_API_BASE_URL` to use the live backend instead of the local mock planner.

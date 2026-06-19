@@ -18,6 +18,12 @@ Build/
 .build/
 .swiftpm/
 
+# Python
+.venv/
+**/.venv/
+__pycache__/
+*.py[cod]
+
 # CocoaPods / Carthage
 Pods/
 Carthage/Build/
