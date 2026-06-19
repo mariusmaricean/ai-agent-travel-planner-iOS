@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Optional
+import os
 import unittest
 
 from app.planner import create_trip_plan
@@ -8,11 +9,21 @@ from app.tools import (
     FareOption,
     FlightSearchQuery,
     ItineraryPlanningInput,
+    OpenAIItineraryPlanner,
+    OpenAIPlannerConfig,
     TravelPlanningToolRouter,
+    model_backed_itinerary_planner,
 )
 
 
 class TripPlannerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.openai_api_key = os.environ.pop("OPENAI_API_KEY", None)
+
+    def tearDown(self) -> None:
+        if self.openai_api_key is not None:
+            os.environ["OPENAI_API_KEY"] = self.openai_api_key
+
     def test_create_trip_plan_returns_contract_shape(self) -> None:
         request = make_request()
 
@@ -78,6 +89,27 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(response.trips[0].name, "Provider Plan")
         self.assertEqual(response.memory, saved_memory)
 
+    def test_model_backed_planner_falls_back_without_api_key(self) -> None:
+        planning_input = make_planning_input()
+
+        trips = model_backed_itinerary_planner(planning_input)
+
+        self.assertEqual(len(trips), 1)
+        self.assertEqual(trips[0].name, "Provider Fare")
+        self.assertEqual(trips[0].route, "New York -> Lisbon")
+
+    def test_openai_planner_request_body_uses_structured_outputs(self) -> None:
+        planner = OpenAIItineraryPlanner(OpenAIPlannerConfig(api_key="test-key"))
+
+        body = planner.request_body(make_planning_input())
+
+        self.assertEqual(body["model"], "gpt-5.5")
+        self.assertEqual(body["reasoning"]["effort"], "low")
+        self.assertFalse(body["store"])
+        self.assertEqual(body["text"]["format"]["type"], "json_schema")
+        self.assertEqual(body["text"]["format"]["name"], "travel_itinerary_options")
+        self.assertTrue(body["text"]["format"]["strict"])
+
 
 def make_request(
     rememberPreferences: bool = True,
@@ -93,6 +125,30 @@ def make_request(
         rememberPreferences=rememberPreferences,
         mood="Culture",
         memory=memory or [],
+    )
+
+
+def make_planning_input() -> ItineraryPlanningInput:
+    request = make_request(memory=[MemoryNote(title="Preference", detail="Likes culture walks.")])
+
+    return ItineraryPlanningInput(
+        origin=request.origin,
+        destination=request.destination,
+        depart_date=request.departDate,
+        return_date=request.returnDate,
+        budget=request.budget,
+        duration=5,
+        mood=request.mood,
+        constraints=request.constraints,
+        memory=request.memory,
+        fares=[
+            FareOption(
+                name="Provider Fare",
+                fare=510,
+                score=97,
+                meta="provider fare",
+            )
+        ],
     )
 
 

@@ -25,8 +25,18 @@ http://127.0.0.1:8000
 
 `POST /trip-plans` matches the contract documented in the root `README.md`.
 
+## Model-backed Planning
+
+Set `OPENAI_API_KEY` to enable the model-backed itinerary planner. Without an API key, the backend keeps using the local rule-based planner.
+
+Optional environment variables:
+
+- `OPENAI_MODEL`: defaults to `gpt-5.5`.
+- `OPENAI_BASE_URL`: defaults to `https://api.openai.com/v1`.
+- `OPENAI_TIMEOUT_SECONDS`: defaults to `30`.
+- `OPENAI_REASONING_EFFORT`: defaults to `low`.
+
 ## Next Integration Points
 
 - Replace `search_flights()` in `app/tools.py` with a real flight provider.
-- Replace `build_itinerary()` in `app/tools.py` with a model-backed planning call.
 - Move long-running work into a job or workflow if provider calls become slow.
