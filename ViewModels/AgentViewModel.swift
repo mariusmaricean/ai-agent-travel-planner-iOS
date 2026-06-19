@@ -35,10 +35,6 @@ final class AgentViewModel: ObservableObject {
         savedTrips.count
     }
 
-    var visibleTrips: [TripOption] {
-        trips.isEmpty ? savedTrips : trips
-    }
-
     var runStatus: String {
         runState.title
     }
@@ -102,9 +98,13 @@ final class AgentViewModel: ObservableObject {
     }
 
     func saveTrip(_ trip: TripOption) {
-        if !savedTrips.contains(where: { $0.id == trip.id }) {
-            savedTrips.insert(trip, at: 0)
+        if let savedTrip = savedTrip(matching: trip) {
+            activeTripID = savedTrip.id
+            save()
+            return
         }
+
+        savedTrips.insert(trip, at: 0)
         activeTripID = trip.id
         save()
     }
@@ -117,6 +117,36 @@ final class AgentViewModel: ObservableObject {
     func selectTrip(_ trip: TripOption) {
         activeTripID = trip.id
         save()
+    }
+
+    func removeSavedTrip(_ trip: TripOption) {
+        let wasActive = isTripActive(trip)
+
+        savedTrips.removeAll { savedTrip in
+            savedTrip.id == trip.id || savedTrip.matchesSavedTrip(trip)
+        }
+
+        if wasActive {
+            activeTripID = trips.first?.id ?? savedTrips.first?.id
+        }
+
+        save()
+    }
+
+    func isTripSaved(_ trip: TripOption) -> Bool {
+        savedTrip(matching: trip) != nil
+    }
+
+    func isTripActive(_ trip: TripOption) -> Bool {
+        if activeTripID == trip.id {
+            return true
+        }
+
+        guard let activeTrip = savedTrips.first(where: { $0.id == activeTripID }) else {
+            return false
+        }
+
+        return activeTrip.matchesSavedTrip(trip)
     }
 
     func loadSample() {
@@ -214,6 +244,12 @@ final class AgentViewModel: ObservableObject {
                 detail: "\(bestTrip.name) to \(destination) at \(dollars(bestTrip.fare))."
             )
         ]
+    }
+
+    private func savedTrip(matching trip: TripOption) -> TripOption? {
+        savedTrips.first { savedTrip in
+            savedTrip.id == trip.id || savedTrip.matchesSavedTrip(trip)
+        }
     }
 
     private func save() {

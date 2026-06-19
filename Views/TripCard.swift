@@ -6,6 +6,7 @@ struct TripCard: View {
     var isSaved: Bool
     var onSelect: () -> Void
     var onSave: () -> Void
+    var onDetails: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -56,7 +57,13 @@ struct TripCard: View {
                 }
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Button(action: onDetails) {
+                    Label("Details", systemImage: "list.bullet.rectangle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+
                 Button(action: onSelect) {
                     Label("Select", systemImage: "checkmark.circle")
                         .frame(maxWidth: .infinity)
@@ -69,6 +76,7 @@ struct TripCard: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(isSaved ? TravelPlannerColor.coral : TravelPlannerColor.teal)
+                .disabled(isSaved)
             }
         }
         .padding(14)
