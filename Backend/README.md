@@ -25,6 +25,17 @@ http://127.0.0.1:8000
 
 `POST /trip-plans` matches the contract documented in the root `README.md`.
 
+## Agent Runtime
+
+The backend is the agent runtime for the iOS client. FastAPI receives `POST /trip-plans`, then `TripCoordinatorAgent` orchestrates the existing flight tool, `ItineraryAgent`, and `ItineraryCriticAgent`. SwiftUI remains the presentation layer and talks to this backend through the existing API contract.
+
+Current split:
+
+- Flight search: tool through `TravelPlanningToolRouter`.
+- Itinerary planning: `ItineraryAgent`, backed by the existing rule-based or OpenAI planner.
+- Quality control: `ItineraryCriticAgent`, with a single revise pass when a trip is rejected.
+- Coordination and memory: `TripCoordinatorAgent`.
+
 ## Model-backed Planning
 
 Set `OPENAI_API_KEY` to enable the model-backed itinerary planner. Without an API key, the backend keeps using the local rule-based planner.

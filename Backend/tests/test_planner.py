@@ -3,6 +3,7 @@ from typing import Optional
 import os
 import unittest
 
+from app.agents import Critique, ItineraryCriticAgent, TripCoordinatorAgent
 from app.planner import create_trip_plan
 from app.schemas import MemoryNote, TripDay, TripOption, TripPlanRequest
 from app.tools import (
@@ -89,6 +90,45 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(response.trips[0].name, "Provider Plan")
         self.assertEqual(response.memory, saved_memory)
 
+    def test_coordinator_revises_rejected_trip_once(self) -> None:
+        request = make_request()
+        tools = TravelPlanningToolRouter(
+            flight_provider=lambda query: [
+                FareOption(
+                    name="Over Budget",
+                    fare=1500,
+                    score=93,
+                    meta="test fare",
+                )
+            ],
+            itinerary_planner=lambda planning_input: [
+                TripOption(
+                    name="Over Budget",
+                    route="New York -> Lisbon",
+                    fare=1500,
+                    score=93,
+                    meta="test fare",
+                    days=[
+                        TripDay(
+                            label="D1",
+                            title="Packed day",
+                            detail="Museum, market, tram, castle, dinner.",
+                        )
+                    ],
+                )
+            ],
+        )
+        coordinator = TripCoordinatorAgent(
+            tools=tools,
+            critic_agent=RejectingCriticAgent(),
+        )
+
+        response = coordinator.run(request)
+
+        self.assertEqual(len(response.trips), 1)
+        self.assertIn("critic-reviewed", response.trips[0].meta)
+        self.assertIn("Critic revision", response.trips[0].days[-1].detail)
+
     def test_model_backed_planner_falls_back_without_api_key(self) -> None:
         planning_input = make_planning_input()
 
@@ -109,6 +149,20 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(body["text"]["format"]["type"], "json_schema")
         self.assertEqual(body["text"]["format"]["name"], "travel_itinerary_options")
         self.assertTrue(body["text"]["format"]["strict"])
+
+
+class RejectingCriticAgent(ItineraryCriticAgent):
+    def run(
+        self,
+        request: TripPlanRequest,
+        trip: TripOption,
+    ) -> Critique:
+        return Critique(
+            approved=False,
+            score=72,
+            issues=["Trip is over budget."],
+            recommendations=["Add a budget-safe revision note."],
+        )
 
 
 def make_request(
