@@ -8,6 +8,11 @@ This is a SwiftUI-native version of the mobile-first autonomous travel agent pro
 - `TravelPlannerApp.swift`: complete SwiftUI app shell with trip brief, agent run timeline, saved trips, and UserDefaults-backed memory.
 - `Assets.xcassets/TravelPlannerHero.imageset`: generated travel visual used by the iOS hero.
 - `Backend/`: FastAPI scaffold for the live `POST /trip-plans` endpoint.
+- `AGENTS.md`: repository rules and Swift/SwiftUI guidance for AI coding assistants.
+
+## AGENTS.md
+
+This repository uses `AGENTS.md` as the single guidance file for AI coding assistants. Credit for the base guidance goes to [SwiftAgents](https://github.com/twostraws/SwiftAgents) by Paul Hudson, an AGENTS.md file for Swift and SwiftUI projects. Read it before making changes so code edits follow the project context, Swift conventions, and verification expectations.
 
 ## Run
 
