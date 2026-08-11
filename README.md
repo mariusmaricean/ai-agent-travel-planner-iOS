@@ -55,6 +55,8 @@ TripCoordinatorAgent
    ├── ResearchAgent
    ├── ItineraryAgent
    ├── CriticAgent
+   ├── Revision loop
+   ├── Final critique
    └── Tools
 ```
 
@@ -75,10 +77,10 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ## Agent Integration Points
 - Set `TRAVEL_PLANNER_API_BASE_URL` to use the live backend instead of the local mock planner.
 - Route `searchFlights(origin, destination, dates, budget)` to a flight provider function.
+- Route `researchDestination(destination, mood, constraints, memory)` to Places, Maps, Weather, or events data.
 - Route `buildItinerary(fares, constraints, memory)` to your planning/model function.
 - Route rejected plans through the backend itinerary reviser so the critic feedback changes the itinerary content.
 - Return updated `memory` from the backend, or omit it to keep the local memory update.
-- Add a destination research agent before itinerary generation.
 
 The local Swift planner remains useful as a preview/fallback experience. Production intelligence and orchestration should stay behind the backend API.
 

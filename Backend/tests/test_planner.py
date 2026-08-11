@@ -4,17 +4,26 @@ import unittest
 from datetime import datetime, timezone
 from typing import Optional
 
-from app.agents import Critique, ItineraryCriticAgent, TripCoordinatorAgent
+from app.agents import (
+    Critique,
+    DestinationResearchAgent,
+    ItineraryCriticAgent,
+    TripCoordinatorAgent,
+)
 from app.planner import create_trip_plan
-from app.schemas import MemoryNote, TripDay, TripOption, TripPlanRequest
+from app.schemas import DestinationResearch, MemoryNote, TripDay, TripOption, TripPlanRequest
 from app.tools import (
+    DestinationResearchQuery,
     FareOption,
     FlightSearchQuery,
     ItineraryPlanningInput,
     ItineraryRevisionInput,
+    OpenAIDestinationResearcher,
     OpenAIItineraryPlanner,
+    OpenAIItineraryReviser,
     OpenAIPlannerConfig,
     TravelPlanningToolRouter,
+    model_backed_destination_researcher,
     model_backed_itinerary_planner,
     rule_based_itinerary_reviser,
 )
@@ -44,6 +53,14 @@ class TripPlannerTests(unittest.TestCase):
         saved_memory = [MemoryNote(title="Preference", detail="Likes culture walks.")]
         request = make_request(rememberPreferences=False, memory=saved_memory)
 
+        def destination_researcher(query: DestinationResearchQuery) -> DestinationResearch:
+            calls.append("research")
+            self.assertEqual(query.destination, "Lisbon")
+            self.assertEqual(query.mood, "Culture")
+            self.assertEqual(query.memory, saved_memory)
+
+            return make_destination_research()
+
         def flight_provider(query: FlightSearchQuery) -> list[FareOption]:
             calls.append("flight")
             self.assertEqual(query.origin, "New York")
@@ -64,6 +81,10 @@ class TripPlannerTests(unittest.TestCase):
             self.assertEqual(planning_input.constraints, "Window seat, no red-eye flights.")
             self.assertEqual(planning_input.memory, saved_memory)
             self.assertEqual(planning_input.fares[0].name, "Provider Fare")
+            self.assertEqual(
+                planning_input.destination_research,
+                make_destination_research(),
+            )
 
             return [
                 TripOption(
@@ -85,13 +106,33 @@ class TripPlannerTests(unittest.TestCase):
         tools = TravelPlanningToolRouter(
             flight_provider=flight_provider,
             itinerary_planner=itinerary_planner,
+            destination_researcher=destination_researcher,
         )
 
         response = create_trip_plan(request, tools=tools)
 
-        self.assertEqual(calls, ["flight", "itinerary"])
+        self.assertEqual(calls, ["research", "flight", "itinerary"])
         self.assertEqual(response.trips[0].name, "Provider Plan")
         self.assertEqual(response.memory, saved_memory)
+
+    def test_destination_research_agent_routes_research_tool(self) -> None:
+        calls: list[str] = []
+
+        def destination_researcher(query: DestinationResearchQuery) -> DestinationResearch:
+            calls.append(query.destination)
+            return make_destination_research()
+
+        tools = TravelPlanningToolRouter(
+            flight_provider=lambda query: [],
+            itinerary_planner=lambda planning_input: [],
+            destination_researcher=destination_researcher,
+        )
+        agent = DestinationResearchAgent(tools)
+
+        research = agent.run(make_request())
+
+        self.assertEqual(calls, ["Lisbon"])
+        self.assertEqual(research.summary, "Lisbon culture research.")
 
     def test_coordinator_revises_rejected_trip_once(self) -> None:
         request = make_request()
@@ -130,6 +171,7 @@ class TripPlannerTests(unittest.TestCase):
 
         self.assertEqual(len(response.trips), 1)
         self.assertIn("critic-reviewed", response.trips[0].meta)
+        self.assertIn("revision-needs-review", response.trips[0].meta)
         self.assertNotIn("Critic revision", response.trips[0].days[-1].detail)
         self.assertIn("Prioritize free sights", response.trips[0].days[-1].detail)
 
@@ -178,10 +220,18 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(trips[0].name, "Provider Fare")
         self.assertEqual(trips[0].route, "New York -> Lisbon")
 
+    def test_model_backed_researcher_falls_back_without_api_key(self) -> None:
+        research = model_backed_destination_researcher(make_destination_research_query())
+
+        self.assertEqual(research.destination, "Lisbon")
+        self.assertIn("Lisbon", research.summary)
+        self.assertEqual(len(research.highlights), 3)
+
     def test_openai_planner_request_body_uses_structured_outputs(self) -> None:
         planner = OpenAIItineraryPlanner(OpenAIPlannerConfig(api_key="test-key"))
 
         body = planner.request_body(make_planning_input())
+        prompt_payload = json_from_body(body)
 
         self.assertEqual(body["model"], "gpt-5.5")
         self.assertEqual(body["reasoning"]["effort"], "low")
@@ -189,11 +239,27 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(body["text"]["format"]["type"], "json_schema")
         self.assertEqual(body["text"]["format"]["name"], "travel_itinerary_options")
         self.assertTrue(body["text"]["format"]["strict"])
+        self.assertEqual(prompt_payload["destinationResearch"]["destination"], "Lisbon")
+
+    def test_openai_destination_research_request_body_uses_structured_outputs(self) -> None:
+        researcher = OpenAIDestinationResearcher(OpenAIPlannerConfig(api_key="test-key"))
+
+        body = researcher.request_body(make_destination_research_query())
+        prompt_payload = json_from_body(body)
+
+        self.assertEqual(body["model"], "gpt-5.5")
+        self.assertEqual(body["reasoning"]["effort"], "low")
+        self.assertFalse(body["store"])
+        self.assertEqual(body["text"]["format"]["type"], "json_schema")
+        self.assertEqual(body["text"]["format"]["name"], "destination_research")
+        self.assertTrue(body["text"]["format"]["strict"])
+        self.assertEqual(prompt_payload["trip"]["destination"], "Lisbon")
+        self.assertIn("Prefer experience types", prompt_payload["successCriteria"][1])
 
     def test_openai_revision_request_body_uses_critique_context(self) -> None:
-        planner = OpenAIItineraryPlanner(OpenAIPlannerConfig(api_key="test-key"))
+        reviser = OpenAIItineraryReviser(OpenAIPlannerConfig(api_key="test-key"))
 
-        body = planner.revision_request_body(
+        body = reviser.request_body(
             ItineraryRevisionInput(
                 request=make_request(),
                 original_trip=TripOption(
@@ -213,6 +279,7 @@ class TripPlannerTests(unittest.TestCase):
                 critic_score=76,
                 issues=["D1 may be too packed for a mobile travel plan."],
                 recommendations=["Add a protected break or reduce the number of activities."],
+                destination_research=make_destination_research(),
             )
         )
         prompt_payload = json_from_body(body)
@@ -221,6 +288,7 @@ class TripPlannerTests(unittest.TestCase):
         self.assertTrue(body["text"]["format"]["strict"])
         self.assertEqual(prompt_payload["originalTrip"]["name"], "Packed Plan")
         self.assertEqual(prompt_payload["critique"]["score"], 76)
+        self.assertEqual(prompt_payload["destinationResearch"]["summary"], "Lisbon culture research.")
         self.assertIn("Return exactly one revised option", prompt_payload["successCriteria"][0])
 
 
@@ -276,6 +344,40 @@ def make_planning_input() -> ItineraryPlanningInput:
                 meta="provider fare",
             )
         ],
+        destination_research=make_destination_research(),
+    )
+
+
+def make_destination_research() -> DestinationResearch:
+    return DestinationResearch(
+        destination="Lisbon",
+        summary="Lisbon culture research.",
+        highlights=[
+            "Tile museum",
+            "Old town walk",
+            "Riverfront concert",
+        ],
+        cautions=[
+            "Avoid stacking too many cross-town activities into one day.",
+        ],
+        local_tips=[
+            "Hold one open block for local recommendations.",
+        ],
+    )
+
+
+def make_destination_research_query() -> DestinationResearchQuery:
+    request = make_request(memory=[MemoryNote(title="Preference", detail="Likes culture walks.")])
+
+    return DestinationResearchQuery(
+        origin=request.origin,
+        destination=request.destination,
+        depart_date=request.departDate,
+        return_date=request.returnDate,
+        budget=request.budget,
+        mood=request.mood,
+        constraints=request.constraints,
+        memory=request.memory,
     )
 
 

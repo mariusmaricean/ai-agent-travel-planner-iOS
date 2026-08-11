@@ -36,6 +36,14 @@ class TripOption(BaseModel):
     days: list[TripDay]
 
 
+class DestinationResearch(BaseModel):
+    destination: str
+    summary: str
+    highlights: list[str] = Field(default_factory=list)
+    cautions: list[str] = Field(default_factory=list)
+    local_tips: list[str] = Field(default_factory=list)
+
+
 class TripPlanResponse(BaseModel):
     trips: list[TripOption]
     memory: Optional[list[MemoryNote]] = None

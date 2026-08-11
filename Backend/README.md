@@ -27,20 +27,34 @@ http://127.0.0.1:8000
 
 ## Agent Runtime
 
-The backend is the agent runtime for the iOS client. FastAPI receives `POST /trip-plans`, then `TripCoordinatorAgent` orchestrates the existing flight tool, `ItineraryAgent`, and `ItineraryCriticAgent`. SwiftUI remains the presentation layer and talks to this backend through the existing API contract.
+The backend is the agent runtime for the iOS client. FastAPI receives `POST /trip-plans`; `TripCoordinatorAgent` then runs a bounded agent workflow while SwiftUI stays focused on presentation.
 
-Current split:
+Current flow:
+
+```text
+TripCoordinatorAgent
+  -> flight search tool
+  -> DestinationResearchAgent
+  -> ItineraryAgent
+  -> ItineraryCriticAgent
+  -> ItineraryAgent.revise() when rejected
+  -> final critique + response/memory
+```
+
+Responsibilities:
 
 - Flight search: tool through `TravelPlanningToolRouter`.
-- Itinerary planning and revision: `ItineraryAgent`, backed by the existing rule-based or OpenAI planner/reviser.
-- Quality control: `ItineraryCriticAgent`, with deterministic guardrails and a single revise pass when a trip is rejected.
+- Destination research: `DestinationResearchAgent`, using a model-backed research tool when `OPENAI_API_KEY` is configured and a deterministic fallback otherwise.
+- Itinerary planning: `ItineraryAgent`, backed by the existing rule-based or OpenAI planner.
+- Quality control: `ItineraryCriticAgent`, kept deterministic for fast guardrail checks.
+- Revision: a rejected itinerary is sent back through a dedicated reviser that makes concrete day-plan changes; with OpenAI enabled this is a structured model call, otherwise a deterministic fallback is used.
 - Coordination and memory: `TripCoordinatorAgent`.
 
-The feedback loop is now: generate itinerary, evaluate it, revise rejected options, then update memory for the iOS client response.
+The coordinator intentionally allows only one revision pass so request latency and model cost remain bounded. The revised result is critiqued once more before it is returned.
 
 ## Model-backed Planning
 
-Set `OPENAI_API_KEY` to enable the model-backed itinerary planner and reviser. Without an API key, the backend keeps using local rule-based planning and revision.
+Set `OPENAI_API_KEY` to enable the model-backed itinerary planner. Without an API key, the backend keeps using the local rule-based planner.
 
 Keep API keys on the backend only. Do not add OpenAI keys to the iOS app, Swift files, Xcode build settings, or committed files.
 
@@ -72,5 +86,4 @@ Optional environment variables:
 ## Next Integration Points
 
 - Replace `search_flights()` in `app/tools.py` with a real flight provider.
-- Add a destination research agent before itinerary generation.
 - Move long-running work into a job or workflow if provider calls become slow.
