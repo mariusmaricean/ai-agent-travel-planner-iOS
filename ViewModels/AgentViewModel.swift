@@ -115,7 +115,7 @@ final class AgentViewModel: ObservableObject {
     }
 
     func selectTrip(_ trip: TripOption) {
-        activeTripID = trip.id
+        activeTripID = savedTrip(matching: trip)?.id ?? trip.id
         save()
     }
 
@@ -137,6 +137,14 @@ final class AgentViewModel: ObservableObject {
         savedTrip(matching: trip) != nil
     }
 
+    func savedVersion(of trip: TripOption) -> TripOption {
+        savedTrip(matching: trip) ?? trip
+    }
+
+    func executionStatus(for trip: TripOption) -> TripExecutionStatus? {
+        savedTrip(matching: trip)?.executionStatus
+    }
+
     func isTripActive(_ trip: TripOption) -> Bool {
         if activeTripID == trip.id {
             return true
@@ -147,6 +155,40 @@ final class AgentViewModel: ObservableObject {
         }
 
         return activeTrip.matchesSavedTrip(trip)
+    }
+
+    func updateExecutionStatus(_ status: TripExecutionStatus, for trip: TripOption) {
+        updateSavedTrip(matching: trip) { savedTrip in
+            savedTrip.executionStatus = status
+        }
+    }
+
+    func updateNotes(_ notes: String, for trip: TripOption) {
+        updateSavedTrip(matching: trip) { savedTrip in
+            savedTrip.notes = notes
+        }
+    }
+
+    func addTask(title: String, to trip: TripOption) {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return }
+
+        updateSavedTrip(matching: trip) { savedTrip in
+            savedTrip.tasks.append(TripTask(title: trimmedTitle))
+        }
+    }
+
+    func toggleTask(_ task: TripTask, for trip: TripOption) {
+        updateSavedTrip(matching: trip) { savedTrip in
+            guard let index = savedTrip.tasks.firstIndex(where: { $0.id == task.id }) else { return }
+            savedTrip.tasks[index].isDone.toggle()
+        }
+    }
+
+    func removeTask(_ task: TripTask, from trip: TripOption) {
+        updateSavedTrip(matching: trip) { savedTrip in
+            savedTrip.tasks.removeAll { $0.id == task.id }
+        }
     }
 
     func loadSample() {
@@ -250,6 +292,24 @@ final class AgentViewModel: ObservableObject {
         savedTrips.first { savedTrip in
             savedTrip.id == trip.id || savedTrip.matchesSavedTrip(trip)
         }
+    }
+
+    private func updateSavedTrip(
+        matching trip: TripOption,
+        update: (inout TripOption) -> Void
+    ) {
+        if let index = savedTrips.firstIndex(where: { $0.id == trip.id || $0.matchesSavedTrip(trip) }) {
+            update(&savedTrips[index])
+            activeTripID = savedTrips[index].id
+            save()
+            return
+        }
+
+        var savedTrip = trip
+        update(&savedTrip)
+        savedTrips.insert(savedTrip, at: 0)
+        activeTripID = savedTrip.id
+        save()
     }
 
     private func save() {

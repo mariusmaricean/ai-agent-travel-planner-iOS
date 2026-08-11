@@ -49,6 +49,7 @@ struct TripsListView: View {
                         trip: trip,
                         isActive: viewModel.isTripActive(trip),
                         isSaved: viewModel.isTripSaved(trip),
+                        executionStatus: executionStatus(for: trip),
                         onSelect: { viewModel.selectTrip(trip) },
                         onSave: { viewModel.saveTrip(trip) },
                         onDetails: { detailTrip = trip }
@@ -93,12 +94,26 @@ struct TripsListView: View {
             "No trips saved yet."
         }
     }
+
+    private func executionStatus(for trip: TripOption) -> TripExecutionStatus? {
+        switch mode {
+        case .results:
+            viewModel.executionStatus(for: trip)
+        case .saved:
+            trip.executionStatus
+        }
+    }
 }
 
 struct TripDetailView: View {
     @ObservedObject var viewModel: AgentViewModel
     var trip: TripOption
     @Environment(\.dismiss) private var dismiss
+    @State private var newTaskTitle = ""
+
+    private var currentTrip: TripOption {
+        viewModel.savedVersion(of: trip)
+    }
 
     var body: some View {
         NavigationStack {
@@ -106,6 +121,9 @@ struct TripDetailView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     detailHeader
                     metrics
+                    executionPanel
+                    notesPanel
+                    tasksPanel
                     itinerary
                 }
                 .padding(16)
@@ -129,14 +147,24 @@ struct TripDetailView: View {
 
     private var detailHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(trip.name)
-                .font(.title2.weight(.bold))
+            HStack(alignment: .top, spacing: 12) {
+                Text(currentTrip.name)
+                    .font(.title2.weight(.bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(trip.route)
+                Label(currentTrip.executionStatus.rawValue, systemImage: currentTrip.executionStatus.symbol)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(currentTrip.executionStatus.tint)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(currentTrip.executionStatus.background, in: Capsule())
+            }
+
+            Text(currentTrip.route)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text(trip.meta)
+            Text(currentTrip.meta)
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -147,17 +175,136 @@ struct TripDetailView: View {
 
     private var metrics: some View {
         HStack(spacing: 10) {
-            MetricCard(value: dollars(trip.fare), label: "Fare", color: TravelPlannerColor.tealSoft)
-            MetricCard(value: "\(trip.score)", label: "Score", color: TravelPlannerColor.goldSoft)
-            MetricCard(value: "\(trip.days.count)", label: "Days", color: TravelPlannerColor.limeSoft)
+            MetricCard(value: dollars(currentTrip.fare), label: "Fare", color: TravelPlannerColor.tealSoft)
+            MetricCard(value: "\(currentTrip.score)", label: "Score", color: TravelPlannerColor.goldSoft)
+            MetricCard(value: "\(currentTrip.days.count)", label: "Days", color: TravelPlannerColor.limeSoft)
         }
+    }
+
+    private var executionPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Execution", subtitle: "Move the trip from idea to booked")
+
+            Picker(
+                "Execution status",
+                selection: Binding(
+                    get: { currentTrip.executionStatus },
+                    set: { viewModel.updateExecutionStatus($0, for: currentTrip) }
+                )
+            ) {
+                ForEach(TripExecutionStatus.allCases) { status in
+                    Label(status.rawValue, systemImage: status.symbol)
+                        .tag(status)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        .padding(14)
+        .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var notesPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Notes", subtitle: "Local context for this plan")
+
+            TextEditor(
+                text: Binding(
+                    get: { currentTrip.notes },
+                    set: { viewModel.updateNotes($0, for: currentTrip) }
+                )
+            )
+            .font(.body)
+            .scrollContentBackground(.hidden)
+            .frame(minHeight: 110)
+            .padding(10)
+            .background(TravelPlannerColor.paper, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .padding(14)
+        .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var tasksPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Tasks", subtitle: "\(completedTaskCount) of \(currentTrip.tasks.count) complete")
+
+            HStack(spacing: 8) {
+                TextField("Add task", text: $newTaskTitle)
+                    .textFieldStyle(.roundedBorder)
+                    .submitLabel(.done)
+                    .onSubmit(addTask)
+
+                Button(action: addTask) {
+                    Image(systemName: "plus")
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(TravelPlannerColor.teal)
+                .disabled(newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if currentTrip.tasks.isEmpty {
+                Text("No tasks yet.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(TravelPlannerColor.paper, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                ForEach(currentTrip.tasks) { task in
+                    taskRow(task)
+                }
+            }
+        }
+        .padding(14)
+        .background(.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var completedTaskCount: Int {
+        currentTrip.tasks.filter(\.isDone).count
+    }
+
+    private func taskRow(_ task: TripTask) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                viewModel.toggleTask(task, for: currentTrip)
+            } label: {
+                Image(systemName: task.isDone ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(task.isDone ? TravelPlannerColor.teal : .secondary)
+            }
+            .buttonStyle(.plain)
+
+            Text(task.title)
+                .font(.subheadline)
+                .strikethrough(task.isDone)
+                .foregroundStyle(task.isDone ? .secondary : .primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(role: .destructive) {
+                viewModel.removeTask(task, from: currentTrip)
+            } label: {
+                Image(systemName: "trash")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(12)
+        .background(TravelPlannerColor.paper, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func addTask() {
+        viewModel.addTask(title: newTaskTitle, to: currentTrip)
+        newTaskTitle = ""
     }
 
     private var itinerary: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionHeader(title: "Itinerary", subtitle: "\(trip.days.count) planned stop\(trip.days.count == 1 ? "" : "s")")
+            SectionHeader(
+                title: "Itinerary",
+                subtitle: "\(currentTrip.days.count) planned stop\(currentTrip.days.count == 1 ? "" : "s")"
+            )
 
-            ForEach(trip.days) { day in
+            ForEach(currentTrip.days) { day in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {
                         Text(day.label)
@@ -185,16 +332,16 @@ struct TripDetailView: View {
     private var actionBar: some View {
         HStack(spacing: 10) {
             Button {
-                viewModel.selectTrip(trip)
+                viewModel.selectTrip(currentTrip)
             } label: {
                 Label("Select", systemImage: "checkmark.circle")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
 
-            if viewModel.isTripSaved(trip) {
+            if viewModel.isTripSaved(currentTrip) {
                 Button(role: .destructive) {
-                    viewModel.removeSavedTrip(trip)
+                    viewModel.removeSavedTrip(currentTrip)
                     dismiss()
                 } label: {
                     Label("Remove", systemImage: "trash")
@@ -203,7 +350,7 @@ struct TripDetailView: View {
                 .buttonStyle(.bordered)
             } else {
                 Button {
-                    viewModel.saveTrip(trip)
+                    viewModel.saveTrip(currentTrip)
                 } label: {
                     Label("Save Trip", systemImage: "tray.and.arrow.down")
                         .frame(maxWidth: .infinity)

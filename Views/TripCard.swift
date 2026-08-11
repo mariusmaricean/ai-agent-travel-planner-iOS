@@ -4,6 +4,7 @@ struct TripCard: View {
     var trip: TripOption
     var isActive: Bool
     var isSaved: Bool
+    var executionStatus: TripExecutionStatus?
     var onSelect: () -> Void
     var onSave: () -> Void
     var onDetails: () -> Void
@@ -24,12 +25,23 @@ struct TripCard: View {
 
                 Spacer()
 
-                Text(dollars(trip.fare))
-                    .font(.headline)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(TravelPlannerColor.teal, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .trailing, spacing: 8) {
+                    Text(dollars(trip.fare))
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(TravelPlannerColor.teal, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                    if let executionStatus {
+                        Label(executionStatus.rawValue, systemImage: executionStatus.symbol)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(executionStatus.tint)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(executionStatus.background, in: Capsule())
+                    }
+                }
             }
 
             VStack(spacing: 8) {
@@ -84,6 +96,41 @@ struct TripCard: View {
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(isActive ? TravelPlannerColor.teal.opacity(0.55) : Color.black.opacity(0.06), lineWidth: isActive ? 2 : 1)
+        }
+    }
+}
+
+extension TripExecutionStatus {
+    var symbol: String {
+        switch self {
+        case .draft:
+            "pencil"
+        case .ready:
+            "checkmark.seal"
+        case .booked:
+            "ticket"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .draft:
+            TravelPlannerColor.coral
+        case .ready:
+            TravelPlannerColor.teal
+        case .booked:
+            TravelPlannerColor.gold
+        }
+    }
+
+    var background: Color {
+        switch self {
+        case .draft:
+            TravelPlannerColor.coralSoft
+        case .ready:
+            TravelPlannerColor.tealSoft
+        case .booked:
+            TravelPlannerColor.goldSoft
         }
     }
 }
