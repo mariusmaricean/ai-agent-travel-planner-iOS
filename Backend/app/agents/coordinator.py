@@ -34,7 +34,7 @@ class TripCoordinatorAgent:
         if critique.approved:
             return trip
 
-        return self.itinerary_agent.revise(trip, critique)
+        return self.itinerary_agent.revise(request, trip, critique)
 
     def updated_memory(
         self,

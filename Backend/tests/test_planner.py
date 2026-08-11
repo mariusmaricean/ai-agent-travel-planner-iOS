@@ -1,7 +1,8 @@
-from datetime import datetime, timezone
-from typing import Optional
+import json
 import os
 import unittest
+from datetime import datetime, timezone
+from typing import Optional
 
 from app.agents import Critique, ItineraryCriticAgent, TripCoordinatorAgent
 from app.planner import create_trip_plan
@@ -10,10 +11,12 @@ from app.tools import (
     FareOption,
     FlightSearchQuery,
     ItineraryPlanningInput,
+    ItineraryRevisionInput,
     OpenAIItineraryPlanner,
     OpenAIPlannerConfig,
     TravelPlanningToolRouter,
     model_backed_itinerary_planner,
+    rule_based_itinerary_reviser,
 )
 
 
@@ -127,7 +130,44 @@ class TripPlannerTests(unittest.TestCase):
 
         self.assertEqual(len(response.trips), 1)
         self.assertIn("critic-reviewed", response.trips[0].meta)
-        self.assertIn("Critic revision", response.trips[0].days[-1].detail)
+        self.assertNotIn("Critic revision", response.trips[0].days[-1].detail)
+        self.assertIn("Prioritize free sights", response.trips[0].days[-1].detail)
+
+    def test_rule_based_revision_rewrites_overpacked_day(self) -> None:
+        request = make_request()
+        trip = TripOption(
+            name="Packed Plan",
+            route="New York -> Lisbon",
+            fare=620,
+            score=93,
+            meta="test fare",
+            days=[
+                TripDay(
+                    label="D1",
+                    title="Too much",
+                    detail="Museum, market, tram, castle, dinner.",
+                )
+            ],
+        )
+
+        revised_trip = rule_based_itinerary_reviser(
+            ItineraryRevisionInput(
+                request=request,
+                original_trip=trip,
+                critic_score=76,
+                issues=["D1 may be too packed for a mobile travel plan."],
+                recommendations=["Add a protected break or reduce the number of activities."],
+            )
+        )
+
+        self.assertEqual(revised_trip.name, trip.name)
+        self.assertEqual(revised_trip.fare, trip.fare)
+        self.assertIn("critic-reviewed", revised_trip.meta)
+        self.assertEqual(
+            revised_trip.days[0].detail,
+            "Museum, market, then a protected break before dinner. "
+            "Constraints honored: Window seat, no red-eye flights.",
+        )
 
     def test_model_backed_planner_falls_back_without_api_key(self) -> None:
         planning_input = make_planning_input()
@@ -149,6 +189,39 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(body["text"]["format"]["type"], "json_schema")
         self.assertEqual(body["text"]["format"]["name"], "travel_itinerary_options")
         self.assertTrue(body["text"]["format"]["strict"])
+
+    def test_openai_revision_request_body_uses_critique_context(self) -> None:
+        planner = OpenAIItineraryPlanner(OpenAIPlannerConfig(api_key="test-key"))
+
+        body = planner.revision_request_body(
+            ItineraryRevisionInput(
+                request=make_request(),
+                original_trip=TripOption(
+                    name="Packed Plan",
+                    route="New York -> Lisbon",
+                    fare=620,
+                    score=93,
+                    meta="test fare",
+                    days=[
+                        TripDay(
+                            label="D1",
+                            title="Too much",
+                            detail="Museum, market, tram, castle, dinner.",
+                        )
+                    ],
+                ),
+                critic_score=76,
+                issues=["D1 may be too packed for a mobile travel plan."],
+                recommendations=["Add a protected break or reduce the number of activities."],
+            )
+        )
+        prompt_payload = json_from_body(body)
+
+        self.assertEqual(body["text"]["format"]["name"], "travel_itinerary_revision")
+        self.assertTrue(body["text"]["format"]["strict"])
+        self.assertEqual(prompt_payload["originalTrip"]["name"], "Packed Plan")
+        self.assertEqual(prompt_payload["critique"]["score"], 76)
+        self.assertIn("Return exactly one revised option", prompt_payload["successCriteria"][0])
 
 
 class RejectingCriticAgent(ItineraryCriticAgent):
@@ -204,6 +277,10 @@ def make_planning_input() -> ItineraryPlanningInput:
             )
         ],
     )
+
+
+def json_from_body(body: dict) -> dict:
+    return json.loads(body["input"][1]["content"])
 
 
 if __name__ == "__main__":

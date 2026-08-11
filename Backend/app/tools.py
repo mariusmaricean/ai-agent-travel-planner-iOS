@@ -44,14 +44,25 @@ class ItineraryPlanningInput:
     fares: list[FareOption]
 
 
+@dataclass(frozen=True)
+class ItineraryRevisionInput:
+    request: TripPlanRequest
+    original_trip: TripOption
+    critic_score: int
+    issues: list[str]
+    recommendations: list[str]
+
+
 FlightProviderFunction = Callable[[FlightSearchQuery], list[FareOption]]
 ItineraryPlannerFunction = Callable[[ItineraryPlanningInput], list[TripOption]]
+ItineraryReviserFunction = Callable[[ItineraryRevisionInput], TripOption]
 
 
 @dataclass(frozen=True)
 class TravelPlanningToolRouter:
     flight_provider: FlightProviderFunction
     itinerary_planner: ItineraryPlannerFunction
+    itinerary_reviser: Optional[ItineraryReviserFunction] = None
 
     def search_flights(self, request: TripPlanRequest) -> list[FareOption]:
         query = FlightSearchQuery(
@@ -81,6 +92,24 @@ class TravelPlanningToolRouter:
             fares=fares,
         )
         return self.itinerary_planner(planning_input)
+
+    def revise_itinerary(
+        self,
+        request: TripPlanRequest,
+        trip: TripOption,
+        critic_score: int,
+        issues: list[str],
+        recommendations: list[str],
+    ) -> TripOption:
+        revision_input = ItineraryRevisionInput(
+            request=request,
+            original_trip=trip,
+            critic_score=critic_score,
+            issues=issues,
+            recommendations=recommendations,
+        )
+        reviser = self.itinerary_reviser or model_backed_itinerary_reviser
+        return reviser(revision_input)
 
 
 def mock_flight_provider(query: FlightSearchQuery) -> list[FareOption]:
@@ -171,8 +200,24 @@ class OpenAIItineraryPlanner:
 
         return trips
 
+    def revise(self, revision_input: ItineraryRevisionInput) -> TripOption:
+        response = self.create_revision_response(revision_input)
+        content = extract_output_text(response)
+        payload = parse_model_payload(content)
+        trips = [TripOption(**trip) for trip in payload["trips"]]
+
+        if not trips:
+            raise OpenAIPlannerError("The OpenAI planner returned no revised trip option.")
+
+        return trips[0]
+
     def create_response(self, planning_input: ItineraryPlanningInput) -> dict[str, Any]:
-        request_body = self.request_body(planning_input)
+        return self.send_request(self.request_body(planning_input))
+
+    def create_revision_response(self, revision_input: ItineraryRevisionInput) -> dict[str, Any]:
+        return self.send_request(self.revision_request_body(revision_input))
+
+    def send_request(self, request_body: dict[str, Any]) -> dict[str, Any]:
         request = urllib.request.Request(
             url=f"{self.config.base_url.rstrip('/')}/responses",
             data=json.dumps(request_body).encode("utf-8"),
@@ -228,6 +273,40 @@ class OpenAIItineraryPlanner:
 
         return body
 
+    def revision_request_body(self, revision_input: ItineraryRevisionInput) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": self.config.model,
+            "input": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an itinerary revision agent. Modify the rejected itinerary "
+                        "so it resolves the critic issues while preserving the fare, route, "
+                        "and mobile-friendly response schema. Return only schema-matching data."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(revision_prompt_payload(revision_input), indent=2),
+                },
+            ],
+            "store": False,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "travel_itinerary_revision",
+                    "schema": itinerary_response_schema(),
+                    "strict": True,
+                },
+                "verbosity": "low",
+            },
+        }
+
+        if supports_reasoning(self.config.model):
+            body["reasoning"] = {"effort": self.config.reasoning_effort}
+
+        return body
+
 
 def model_backed_itinerary_planner(planning_input: ItineraryPlanningInput) -> list[TripOption]:
     planner = OpenAIItineraryPlanner.from_environment()
@@ -235,6 +314,14 @@ def model_backed_itinerary_planner(planning_input: ItineraryPlanningInput) -> li
         return rule_based_itinerary_planner(planning_input)
 
     return planner.plan(planning_input)
+
+
+def model_backed_itinerary_reviser(revision_input: ItineraryRevisionInput) -> TripOption:
+    planner = OpenAIItineraryPlanner.from_environment()
+    if planner is None:
+        return rule_based_itinerary_reviser(revision_input)
+
+    return planner.revise(revision_input)
 
 
 def model_prompt_payload(planning_input: ItineraryPlanningInput) -> dict[str, Any]:
@@ -270,6 +357,60 @@ def model_prompt_payload(planning_input: ItineraryPlanningInput) -> dict[str, An
             "Keep each option concise enough for a mobile card.",
             "Use day labels such as D1, D2, and D3.",
             "Preserve each fare option's name, fare, score, and meta values.",
+        ],
+    }
+
+
+def revision_prompt_payload(revision_input: ItineraryRevisionInput) -> dict[str, Any]:
+    request = revision_input.request
+    return {
+        "tripRequest": {
+            "origin": request.origin,
+            "destination": request.destination,
+            "departDate": request.departDate.isoformat(),
+            "returnDate": request.returnDate.isoformat(),
+            "durationDays": trip_duration(request),
+            "budget": request.budget,
+            "mood": request.mood,
+            "constraints": request.constraints,
+        },
+        "memory": [
+            {
+                "title": note.title,
+                "detail": note.detail,
+            }
+            for note in request.memory
+        ],
+        "originalTrip": trip_option_payload(revision_input.original_trip),
+        "critique": {
+            "score": revision_input.critic_score,
+            "issues": revision_input.issues,
+            "recommendations": revision_input.recommendations,
+        },
+        "successCriteria": [
+            "Return exactly one revised option in the trips array.",
+            "Preserve originalTrip.name, originalTrip.route, and originalTrip.fare.",
+            "Resolve each critic issue in the itinerary text, not by appending a note.",
+            "Keep each day concise enough for a mobile trip card.",
+            "Add critic-reviewed to meta once the revision is complete.",
+        ],
+    }
+
+
+def trip_option_payload(trip: TripOption) -> dict[str, Any]:
+    return {
+        "name": trip.name,
+        "route": trip.route,
+        "fare": trip.fare,
+        "score": trip.score,
+        "meta": trip.meta,
+        "days": [
+            {
+                "label": day.label,
+                "title": day.title,
+                "detail": day.detail,
+            }
+            for day in trip.days
         ],
     }
 
@@ -349,6 +490,7 @@ def supports_reasoning(model: str) -> bool:
 default_tool_router = TravelPlanningToolRouter(
     flight_provider=mock_flight_provider,
     itinerary_planner=model_backed_itinerary_planner,
+    itinerary_reviser=model_backed_itinerary_reviser,
 )
 
 
@@ -363,6 +505,22 @@ def build_itinerary(
     return default_tool_router.build_itinerary(request, fares)
 
 
+def revise_itinerary(
+    request: TripPlanRequest,
+    trip: TripOption,
+    critic_score: int,
+    issues: list[str],
+    recommendations: list[str],
+) -> TripOption:
+    return default_tool_router.revise_itinerary(
+        request=request,
+        trip=trip,
+        critic_score=critic_score,
+        issues=issues,
+        recommendations=recommendations,
+    )
+
+
 def trip_duration(request: TripPlanRequest) -> int:
     return trip_duration_from_dates(request.departDate, request.returnDate)
 
@@ -370,6 +528,88 @@ def trip_duration(request: TripPlanRequest) -> int:
 def trip_duration_from_dates(depart_date: datetime, return_date: datetime) -> int:
     duration = (return_date - depart_date).days
     return min(max(duration, 3), 10)
+
+
+def rule_based_itinerary_reviser(revision_input: ItineraryRevisionInput) -> TripOption:
+    trip = revision_input.original_trip
+    days = [
+        revise_day(day, revision_input)
+        for day in trip.days
+    ]
+
+    if not days:
+        days = [
+            TripDay(
+                label="D1",
+                title="Practical reset",
+                detail="Add one concrete plan with a flexible buffer and traveler constraints honored.",
+            )
+        ]
+
+    return TripOption(
+        name=trip.name,
+        route=trip.route,
+        fare=trip.fare,
+        score=max(revision_input.critic_score, min(trip.score, 90)),
+        meta=critic_reviewed_meta(trip.meta),
+        days=days,
+    )
+
+
+def revise_day(day: TripDay, revision_input: ItineraryRevisionInput) -> TripDay:
+    detail = day.detail
+
+    if day_has_issue(day, revision_input.issues) and detail_is_overpacked(detail):
+        detail = relaxed_day_detail(detail)
+
+    if should_surface_constraints(day, revision_input):
+        detail = f"{detail} Constraints honored: {revision_input.request.constraints}"
+
+    if trip_is_over_budget(revision_input):
+        detail = f"{detail} Prioritize free sights and flexible meal choices to protect the budget."
+
+    return TripDay(
+        label=day.label,
+        title=day.title,
+        detail=detail,
+    )
+
+
+def day_has_issue(day: TripDay, issues: list[str]) -> bool:
+    return any(issue.startswith(day.label) for issue in issues)
+
+
+def detail_is_overpacked(detail: str) -> bool:
+    separators = detail.count(",") + detail.count(";")
+    return separators >= 4
+
+
+def relaxed_day_detail(detail: str) -> str:
+    activities = [part.strip() for part in detail.split(",") if part.strip()]
+    if len(activities) < 3:
+        return f"{detail} Add a protected break before the next commitment."
+
+    return f"{activities[0]}, {activities[1]}, then a protected break before dinner."
+
+
+def should_surface_constraints(day: TripDay, revision_input: ItineraryRevisionInput) -> bool:
+    constraints = revision_input.request.constraints.strip()
+    if not constraints or day.label != "D1":
+        return False
+
+    trip_text = json.dumps(trip_option_payload(revision_input.original_trip)).lower()
+    return constraints.lower() not in trip_text
+
+
+def trip_is_over_budget(revision_input: ItineraryRevisionInput) -> bool:
+    return any("budget" in issue.lower() for issue in revision_input.issues)
+
+
+def critic_reviewed_meta(meta: str) -> str:
+    if "critic-reviewed" in meta:
+        return meta
+
+    return f"{meta} | critic-reviewed"
 
 
 def focus_items(mood: str) -> list[str]:

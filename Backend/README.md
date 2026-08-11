@@ -32,17 +32,19 @@ The backend is the agent runtime for the iOS client. FastAPI receives `POST /tri
 Current split:
 
 - Flight search: tool through `TravelPlanningToolRouter`.
-- Itinerary planning: `ItineraryAgent`, backed by the existing rule-based or OpenAI planner.
-- Quality control: `ItineraryCriticAgent`, with a single revise pass when a trip is rejected.
+- Itinerary planning and revision: `ItineraryAgent`, backed by the existing rule-based or OpenAI planner/reviser.
+- Quality control: `ItineraryCriticAgent`, with deterministic guardrails and a single revise pass when a trip is rejected.
 - Coordination and memory: `TripCoordinatorAgent`.
+
+The feedback loop is now: generate itinerary, evaluate it, revise rejected options, then update memory for the iOS client response.
 
 ## Model-backed Planning
 
-Set `OPENAI_API_KEY` to enable the model-backed itinerary planner. Without an API key, the backend keeps using the local rule-based planner.
+Set `OPENAI_API_KEY` to enable the model-backed itinerary planner and reviser. Without an API key, the backend keeps using local rule-based planning and revision.
 
 Keep API keys on the backend only. Do not add OpenAI keys to the iOS app, Swift files, Xcode build settings, or committed files.
 
-For local development, copy the example file and add your rotated key:
+For local development, copy the example file and add your local key:
 
 ```bash
 cp .env.example .env
@@ -51,7 +53,7 @@ cp .env.example .env
 Then edit `.env` locally:
 
 ```text
-OPENAI_API_KEY=your-rotated-key
+OPENAI_API_KEY=your-local-key
 ```
 
 Start the server:
@@ -70,4 +72,5 @@ Optional environment variables:
 ## Next Integration Points
 
 - Replace `search_flights()` in `app/tools.py` with a real flight provider.
+- Add a destination research agent before itinerary generation.
 - Move long-running work into a job or workflow if provider calls become slow.
