@@ -25,7 +25,7 @@ from app.schemas import (
     TripPlanRequest,
     TripPlanResponse,
 )
-from app.telemetry import capture_provider_telemetry
+from app.telemetry import capture_provider_telemetry, provider_event_title
 from app.tools import (
     AmadeusFlightProvider,
     AmadeusFlightProviderConfig,
@@ -45,6 +45,9 @@ from app.tools import (
     OpenMeteoLocation,
     PROVIDER_LOGGER_NAME,
     ResolvedLocation,
+    TicketmasterEvent,
+    TicketmasterEventsProvider,
+    TicketmasterEventsProviderConfig,
     TravelPlanningToolRouter,
     amadeus_fare_options,
     amadeus_location_keyword,
@@ -62,6 +65,8 @@ from app.tools import (
     open_meteo_location,
     open_meteo_weather_summary,
     rule_based_itinerary_reviser,
+    ticketmaster_datetime,
+    ticketmaster_events,
 )
 
 
@@ -85,6 +90,11 @@ class TripPlannerTests(unittest.TestCase):
                 "OPEN_METEO_GEOCODING_URL",
                 "OPEN_METEO_FORECAST_URL",
                 "OPEN_METEO_TIMEOUT_SECONDS",
+                "TICKETMASTER_API_KEY",
+                "TICKETMASTER_COUNTRY_CODE",
+                "TICKETMASTER_EVENTS_URL",
+                "TICKETMASTER_MAX_EVENTS",
+                "TICKETMASTER_TIMEOUT_SECONDS",
                 "TRIP_PLAN_HISTORY_LIMIT",
                 "TRIP_PLAN_HISTORY_STORE_PATH",
                 "TRIP_PLAN_RUN_STORE_PATH",
@@ -601,6 +611,77 @@ class TripPlannerTests(unittest.TestCase):
         self.assertLogContains(logs, '"event": "research.open_meteo_geocode"')
         self.assertLogContains(logs, '"event": "research.open_meteo_forecast"')
 
+    def test_ticketmaster_events_parse_event_response(self) -> None:
+        events = ticketmaster_events(ticketmaster_events_payload())
+
+        self.assertEqual(
+            events,
+            [
+                TicketmasterEvent(
+                    name="Lisbon Summer Sessions",
+                    venue="Campo Pequeno",
+                    city="Lisbon",
+                    local_start="2026-07-12 20:30:00",
+                    classification="Music / Rock",
+                    url="https://ticketmaster.test/event",
+                )
+            ],
+        )
+
+    def test_ticketmaster_provider_returns_event_research(self) -> None:
+        provider = TicketmasterEventsProvider(
+            TicketmasterEventsProviderConfig(
+                api_key="test-key",
+                events_url="https://ticketmaster.test/events.json",
+                timeout_seconds=3,
+            )
+        )
+
+        with patch("app.tools.json_response", return_value=ticketmaster_events_payload()):
+            with self.assertLogs(PROVIDER_LOGGER_NAME, level="INFO") as logs:
+                research = provider.research(make_destination_research_query())
+
+        self.assertEqual(research.destination, "Lisbon")
+        self.assertIn("Ticketmaster", research.summary)
+        self.assertIn("Lisbon Summer Sessions", research.highlights[0])
+        self.assertIn("Confirm event availability", research.cautions[-2])
+        self.assertLogContains(logs, '"event": "research.ticketmaster_events"')
+        self.assertLogContains(logs, '"event_count": 1')
+
+    def test_configured_destination_research_provider_uses_ticketmaster(self) -> None:
+        os.environ["DESTINATION_RESEARCH_PROVIDER"] = "ticketmaster"
+        os.environ["TICKETMASTER_API_KEY"] = "test-key"
+
+        with patch(
+            "app.tools.TicketmasterEventsProvider.research",
+            return_value=make_destination_research(),
+        ) as research:
+            result = configured_destination_research_provider(make_destination_research_query())
+
+        self.assertEqual(result, make_destination_research())
+        self.assertEqual(research.call_count, 1)
+
+    def test_configured_ticketmaster_provider_falls_back_without_api_key(self) -> None:
+        os.environ["DESTINATION_RESEARCH_PROVIDER"] = "ticketmaster"
+
+        with self.assertLogs(PROVIDER_LOGGER_NAME, level="INFO") as logs:
+            result = configured_destination_research_provider(make_destination_research_query())
+
+        self.assertIsNone(result)
+        self.assertLogContains(logs, '"provider": "ticketmaster"')
+        self.assertLogContains(logs, '"error": "missing_ticketmaster_api_key"')
+
+    def test_ticketmaster_datetime_uses_utc_z_suffix(self) -> None:
+        value = datetime(2026, 7, 11, 9, 15, 22, 123, tzinfo=timezone.utc)
+
+        self.assertEqual(ticketmaster_datetime(value), "2026-07-11T09:15:22Z")
+
+    def test_provider_telemetry_title_includes_ticketmaster_events(self) -> None:
+        self.assertEqual(
+            provider_event_title({"event": "research.ticketmaster_events"}),
+            "Event provider results",
+        )
+
     def test_configured_destination_research_provider_uses_open_meteo(self) -> None:
         os.environ["DESTINATION_RESEARCH_PROVIDER"] = "open_meteo"
 
@@ -1102,6 +1183,40 @@ def make_destination_research_query() -> DestinationResearchQuery:
         constraints=request.constraints,
         memory=request.memory,
     )
+
+
+def ticketmaster_events_payload() -> dict:
+    return {
+        "_embedded": {
+            "events": [
+                {
+                    "name": "Lisbon Summer Sessions",
+                    "url": "https://ticketmaster.test/event",
+                    "dates": {
+                        "start": {
+                            "localDate": "2026-07-12",
+                            "localTime": "20:30:00",
+                        }
+                    },
+                    "classifications": [
+                        {
+                            "segment": {"name": "Music"},
+                            "genre": {"name": "Rock"},
+                            "subGenre": {"name": "Undefined"},
+                        }
+                    ],
+                    "_embedded": {
+                        "venues": [
+                            {
+                                "name": "Campo Pequeno",
+                                "city": {"name": "Lisbon"},
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    }
 
 
 def json_from_body(body: dict) -> dict:

@@ -56,7 +56,7 @@ TripCoordinatorAgent
 Responsibilities:
 
 - Flight search: `TravelPlanningToolRouter`, using Amadeus Location Search and Flight Offers when configured and the deterministic mock provider otherwise.
-- Destination research: `DestinationResearchAgent`, using optional Open-Meteo weather research, a model-backed research tool when `OPENAI_API_KEY` is configured, and a deterministic fallback otherwise.
+- Destination research: `DestinationResearchAgent`, using optional Open-Meteo weather research, optional Ticketmaster event research, a model-backed research tool when `OPENAI_API_KEY` is configured, and a deterministic fallback otherwise.
 - Itinerary planning: `ItineraryAgent`, backed by the existing rule-based or OpenAI planner.
 - Quality control: `ItineraryCriticAgent`, kept deterministic for fast guardrail checks.
 - Revision: a rejected itinerary is sent back through a dedicated reviser that makes concrete day-plan changes; with OpenAI enabled this is a structured model call, otherwise a deterministic fallback is used.
@@ -114,6 +114,17 @@ OPEN_METEO_TIMEOUT_SECONDS=12
 
 When OpenAI is also enabled, the Open-Meteo result is passed into the destination research prompt as provider context.
 
+Set `DESTINATION_RESEARCH_PROVIDER=ticketmaster` plus a Ticketmaster Discovery API key to add live event options during the trip window. The backend searches events by destination city, departure date, return date, and optional country code, then passes the event summaries into itinerary planning.
+
+```text
+DESTINATION_RESEARCH_PROVIDER=ticketmaster
+TICKETMASTER_API_KEY=your-ticketmaster-api-key
+TICKETMASTER_EVENTS_URL=https://app.ticketmaster.com/discovery/v2/events.json
+TICKETMASTER_TIMEOUT_SECONDS=12
+TICKETMASTER_MAX_EVENTS=3
+TICKETMASTER_COUNTRY_CODE=
+```
+
 ## Flight Provider
 
 The backend can call Amadeus Self-Service Flight Offers Search when credentials are configured. Without credentials, or when `FLIGHT_PROVIDER=mock`, it keeps using the local mock fare provider.
@@ -132,10 +143,9 @@ PROVIDER_LOG_LEVEL=INFO
 
 The provider accepts three-letter IATA city or airport codes directly. It resolves city names through Amadeus Airport & City Search when Amadeus credentials are configured, with a small local alias table for common demo names such as New York, Lisbon, Copenhagen, and Cluj-Napoca. Successful resolutions are cached in memory per backend process.
 
-Provider decisions are logged through the `travel_planner.providers` logger as `provider_event` records. Current events cover local aliases, IATA input, cache hits/stores, Amadeus location lookups, Amadeus flight offers, provider failures, and mock fallbacks. Live runs also copy those records into `telemetry` progress events so the iOS timeline can display provider decisions while polling.
+Provider decisions are logged through the `travel_planner.providers` logger as `provider_event` records. Current events cover local aliases, IATA input, cache hits/stores, Amadeus location lookups, Amadeus flight offers, Open-Meteo weather calls, Ticketmaster event calls, provider failures, and mock fallbacks. Live runs also copy those records into `telemetry` progress events so the iOS timeline can display provider decisions while polling.
 
 ## Next Integration Points
 
-- Add places or events providers to destination research.
 - Scope saved trip history and memory by authenticated user before production.
 - Move persisted run execution to an external queue or workflow worker before multi-instance deployment.
