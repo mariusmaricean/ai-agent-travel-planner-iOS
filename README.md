@@ -1,18 +1,64 @@
 # Travel Planner for iOS
 
-This is a SwiftUI-native version of the mobile-first autonomous travel agent prototype.
+This is a SwiftUI-native travel planner that treats the iOS app as the agent client and the Python backend as the agent runtime.
 
 ## Files
 
 - `TravelPlanner.xcodeproj`: Xcode project with a single SwiftUI iOS app target.
-- `TravelPlannerApp.swift`: complete SwiftUI app shell with trip brief, agent run timeline, saved trips, and UserDefaults-backed memory.
+- `TravelPlannerApp.swift`: SwiftUI app shell with trip brief, agent run timeline, saved trips, and local memory.
 - `Assets.xcassets/TravelPlannerHero.imageset`: generated travel visual used by the iOS hero.
-- `Backend/`: FastAPI scaffold for the live `POST /trip-plans` endpoint.
+- `Backend/`: FastAPI agent runtime for the live `POST /trip-plans` endpoint.
 - `AGENTS.md`: repository rules and Swift/SwiftUI guidance for AI coding assistants.
 
 ## AGENTS.md
 
 This repository uses `AGENTS.md` as the single guidance file for AI coding assistants. Credit for the base guidance goes to [SwiftAgents](https://github.com/twostraws/SwiftAgents) by Paul Hudson, an AGENTS.md file for Swift and SwiftUI projects. Read it before making changes so code edits follow the project context, Swift conventions, and verification expectations.
+
+## Architecture
+
+The app is split into a lightweight iOS client and a backend agent runtime. Keep core agents on the backend so model calls, external APIs, tool execution, retries, prompt logic, and memory updates stay easier to test, secure, and change without shipping a new app build.
+
+### iOS client
+
+- UI
+- Trip form
+- User interactions
+- Display agent progress
+- Display itinerary
+- Local caching
+- Notifications
+
+
+### Backend runtime
+
+- Coordinator Agent
+- Research Agent
+- Itinerary Agent
+- Critic Agent
+- Memory / traveler profile
+- OpenAI calls
+- Places / Maps / Flights / Weather tools
+- Retry / revision loops
+
+### Request lifecycle
+
+```text
+SwiftUI
+   ↓
+AgentViewModel
+   ↓
+API Client
+   ↓
+FastAPI
+   ↓
+TripCoordinatorAgent
+   ├── ResearchAgent
+   ├── ItineraryAgent
+   ├── CriticAgent
+   ├── Revision loop
+   ├── Final critique
+   └── Tools
+```
 
 ## Run
 
@@ -30,12 +76,13 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Agent Integration Points
 - Set `TRAVEL_PLANNER_API_BASE_URL` to use the live backend instead of the local mock planner.
-- Implement `POST /trip-plans` on your backend.
 - Route `searchFlights(origin, destination, dates, budget)` to a flight provider function.
+- Route `researchDestination(destination, mood, constraints, memory)` to Places, Maps, Weather, or events data.
 - Route `buildItinerary(fares, constraints, memory)` to your planning/model function.
+- Route rejected plans through the backend itinerary reviser so the critic feedback changes the itinerary content.
 - Return updated `memory` from the backend, or omit it to keep the local memory update.
 
-The included implementation intentionally simulates tool calls on-device so the UI can run before any API keys, auth, or backend wiring exists.
+The local Swift planner remains useful as a preview/fallback experience. Production intelligence and orchestration should stay behind the backend API.
 
 ### `POST /trip-plans`
 
