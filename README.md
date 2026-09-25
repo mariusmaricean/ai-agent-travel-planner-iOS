@@ -82,7 +82,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - The iOS client hydrates saved trips and memory from those backend endpoints on launch and from the Saved tab refresh action.
 - Configure `FLIGHT_PROVIDER=amadeus` plus Amadeus credentials to resolve and cache city names, then use real flight offers; without credentials the backend uses the mock provider.
 - Set `DESTINATION_RESEARCH_PROVIDER=open_meteo` to enrich destination research with weather context.
-- Watch the backend `travel_planner.providers` logger to inspect location resolution, provider usage, failures, and mock fallbacks.
+- Watch the backend `travel_planner.providers` logger or the iOS telemetry timeline step to inspect location resolution, provider usage, failures, and mock fallbacks.
 - Route `researchDestination(destination, mood, constraints, memory)` to Places, Maps, Weather, or events data.
 - Route `buildItinerary(fares, constraints, memory)` to your planning/model function.
 - Route rejected plans through the backend itinerary reviser so the critic feedback changes the itinerary content.

@@ -6,6 +6,7 @@ from app.history import TripPlanHistoryStore
 from app.planner import create_trip_plan
 from app.runs import TripPlanRunStore
 from app.schemas import TripPlanRequest, TripPlanResponse
+from app.telemetry import capture_provider_telemetry
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,16 +43,17 @@ class TripPlanJobRunner:
 
     def run(self, run_id: str, request: TripPlanRequest) -> TripPlanResponse | None:
         try:
-            result = create_trip_plan(
-                request,
-                progress=lambda step, status, title, detail: self.store.emit(
-                    run_id=run_id,
-                    step=step,
-                    status=status,
-                    title=title,
-                    detail=detail,
-                ),
-            )
+            with capture_provider_telemetry(run_id, self.store):
+                result = create_trip_plan(
+                    request,
+                    progress=lambda step, status, title, detail: self.store.emit(
+                        run_id=run_id,
+                        step=step,
+                        status=status,
+                        title=title,
+                        detail=detail,
+                    ),
+                )
             self.save_history(request, result, run_id)
             self.store.complete(run_id, result)
             return result

@@ -61,7 +61,7 @@ Responsibilities:
 - Quality control: `ItineraryCriticAgent`, kept deterministic for fast guardrail checks.
 - Revision: a rejected itinerary is sent back through a dedicated reviser that makes concrete day-plan changes; with OpenAI enabled this is a structured model call, otherwise a deterministic fallback is used.
 - Coordination and memory: `TripCoordinatorAgent`.
-- Progress events: `TripPlanRunStore` persists coordinator events for iOS polling, while `TripPlanJobRunner` runs planning work outside the request/response lifecycle.
+- Progress events: `TripPlanRunStore` persists coordinator and provider telemetry events for iOS polling, while `TripPlanJobRunner` runs planning work outside the request/response lifecycle.
 - History and memory persistence: `TripPlanHistoryStore` saves completed direct plans and completed live-run plans for later retrieval.
 
 The coordinator intentionally allows only one revision pass so request latency and model cost remain bounded. The revised result is critiqued once more before it is returned.
@@ -132,11 +132,10 @@ PROVIDER_LOG_LEVEL=INFO
 
 The provider accepts three-letter IATA city or airport codes directly. It resolves city names through Amadeus Airport & City Search when Amadeus credentials are configured, with a small local alias table for common demo names such as New York, Lisbon, Copenhagen, and Cluj-Napoca. Successful resolutions are cached in memory per backend process.
 
-Provider decisions are logged through the `travel_planner.providers` logger as `provider_event` records. Current events cover local aliases, IATA input, cache hits/stores, Amadeus location lookups, Amadeus flight offers, provider failures, and mock fallbacks.
+Provider decisions are logged through the `travel_planner.providers` logger as `provider_event` records. Current events cover local aliases, IATA input, cache hits/stores, Amadeus location lookups, Amadeus flight offers, provider failures, and mock fallbacks. Live runs also copy those records into `telemetry` progress events so the iOS timeline can display provider decisions while polling.
 
 ## Next Integration Points
 
 - Add places or events providers to destination research.
 - Scope saved trip history and memory by authenticated user before production.
-- Surface provider telemetry in live run events or a monitoring dashboard.
 - Move persisted run execution to an external queue or workflow worker before multi-instance deployment.

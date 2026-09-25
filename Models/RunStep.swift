@@ -10,6 +10,7 @@ enum StepStatus: String, Codable, Sendable {
 enum AgentRunStep: String, Codable, Sendable {
     case research
     case flights
+    case telemetry
     case itinerary
     case critic
     case revision

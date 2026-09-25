@@ -132,8 +132,10 @@ final class AgentViewModel: ObservableObject {
     private func applyProgress(_ event: AgentRunProgressEvent) {
         guard let index = steps.firstIndex(where: { $0.key == event.step }) else { return }
 
-        for stepIndex in steps.indices where stepIndex < index && steps[stepIndex].status != .failed {
-            steps[stepIndex].status = .done
+        if event.step != .telemetry {
+            for stepIndex in steps.indices where stepIndex < index && steps[stepIndex].status != .failed {
+                steps[stepIndex].status = .done
+            }
         }
 
         steps[index].status = event.status
@@ -147,6 +149,10 @@ final class AgentViewModel: ObservableObject {
     private func finishProgress() {
         for index in steps.indices {
             if steps[index].status != .failed {
+                if steps[index].key == .telemetry && steps[index].status == .queued {
+                    steps[index].detail = "No provider telemetry emitted"
+                }
+
                 steps[index].status = .done
             }
         }
@@ -362,6 +368,13 @@ final class AgentViewModel: ObservableObject {
                 detail: "TravelPlanningToolRouter.search_flights() checks route, dates, and \(dollars(budget)) ceiling",
                 tag: "tool call",
                 symbol: "airplane.departure"
+            ),
+            RunStep(
+                key: .telemetry,
+                title: "Provider telemetry",
+                detail: "Waiting for provider decisions",
+                tag: "observability",
+                symbol: "antenna.radiowaves.left.and.right"
             ),
             RunStep(
                 key: .itinerary,
