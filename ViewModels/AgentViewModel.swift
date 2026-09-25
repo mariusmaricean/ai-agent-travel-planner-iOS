@@ -87,11 +87,11 @@ final class AgentViewModel: ObservableObject {
         runState = .running
         trips = []
         steps = makeSteps()
-        let progressTask = Task { await animateAgentProgress() }
 
         do {
-            let result = try await planningService.makePlan(for: currentBrief)
-            progressTask.cancel()
+            let result = try await planningService.makePlan(for: currentBrief) { [weak self] event in
+                self?.applyProgress(event)
+            }
             finishProgress()
             trips = result.trips
             activeTripID = result.trips.first?.id
@@ -99,53 +99,39 @@ final class AgentViewModel: ObservableObject {
             runState = .done
             save()
         } catch {
-            progressTask.cancel()
             failProgress()
             runState = .failed(error.localizedDescription)
         }
     }
 
-    private func animateAgentProgress() async {
-        for index in steps.indices {
-            guard !Task.isCancelled else { return }
-
-            activateStep(at: index)
-
-            do {
-                try await Task.sleep(for: .milliseconds(560))
-            } catch {
-                return
-            }
-
-            guard !Task.isCancelled else { return }
-            completeStep(at: index)
-        }
-    }
-
-    private func activateStep(at index: Int) {
-        guard steps.indices.contains(index) else { return }
+    private func applyProgress(_ event: AgentRunProgressEvent) {
+        guard let index = steps.firstIndex(where: { $0.key == event.step }) else { return }
 
         for stepIndex in steps.indices where stepIndex < index && steps[stepIndex].status != .failed {
             steps[stepIndex].status = .done
         }
 
-        if steps[index].status == .queued {
-            steps[index].status = .active
-        }
-    }
+        steps[index].status = event.status
+        steps[index].title = event.title
 
-    private func completeStep(at index: Int) {
-        guard steps.indices.contains(index), steps[index].status == .active else { return }
-        steps[index].status = .done
+        if !event.detail.isEmpty {
+            steps[index].detail = event.detail
+        }
     }
 
     private func finishProgress() {
         for index in steps.indices {
-            steps[index].status = .done
+            if steps[index].status != .failed {
+                steps[index].status = .done
+            }
         }
     }
 
     private func failProgress() {
+        if steps.contains(where: { $0.status == .failed }) {
+            return
+        }
+
         if let activeIndex = steps.firstIndex(where: { $0.status == .active }) {
             steps[activeIndex].status = .failed
             return
@@ -313,36 +299,42 @@ final class AgentViewModel: ObservableObject {
 
         return [
             RunStep(
+                key: .research,
                 title: "Research destination",
                 detail: "DestinationResearchAgent studies \(destination), \(mood.rawValue.lowercased()) goals, constraints, and memory",
                 tag: "research",
                 symbol: "binoculars"
             ),
             RunStep(
+                key: .flights,
                 title: "Search flights",
                 detail: "TravelPlanningToolRouter.search_flights() checks route, dates, and \(dollars(budget)) ceiling",
                 tag: "tool call",
                 symbol: "airplane.departure"
             ),
             RunStep(
+                key: .itinerary,
                 title: "Build itinerary",
                 detail: "ItineraryAgent turns fares and destination research into trip options",
                 tag: "planning",
                 symbol: "map"
             ),
             RunStep(
+                key: .critic,
                 title: "Critic review",
                 detail: "ItineraryCriticAgent checks budget, constraints, pacing, and missing days",
                 tag: "guardrail",
                 symbol: "checklist"
             ),
             RunStep(
+                key: .revision,
                 title: "Revise if needed",
                 detail: "Rejected plans go through ItineraryAgent.revise() before the final response",
                 tag: "feedback",
                 symbol: "arrow.triangle.2.circlepath"
             ),
             RunStep(
+                key: .memory,
                 title: "Finalize memory",
                 detail: memoryDetail,
                 tag: "memory",

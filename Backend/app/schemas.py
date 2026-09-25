@@ -47,3 +47,20 @@ class DestinationResearch(BaseModel):
 class TripPlanResponse(BaseModel):
     trips: list[TripOption]
     memory: Optional[list[MemoryNote]] = None
+
+
+class AgentRunEvent(BaseModel):
+    id: int
+    step: str
+    status: str
+    title: str
+    detail: str = ""
+    createdAt: datetime
+
+
+class TripPlanRunSnapshot(BaseModel):
+    runId: str
+    status: str
+    events: list[AgentRunEvent] = Field(default_factory=list)
+    result: Optional[TripPlanResponse] = None
+    error: Optional[str] = None
