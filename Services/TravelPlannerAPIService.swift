@@ -22,13 +22,16 @@ enum TravelPlannerAPIError: LocalizedError, Sendable {
 
 struct TravelPlannerAPIService: TravelPlanningServicing, Sendable {
     private let baseURL: URL
+    private let travelerID: String
     private let session: URLSession
 
     init(
         baseURL: URL,
+        travelerID: String = TravelPlannerClientIdentity.travelerID,
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL
+        self.travelerID = travelerID
         self.session = session
     }
 
@@ -70,7 +73,8 @@ struct TravelPlannerAPIService: TravelPlanningServicing, Sendable {
             .appending(path: "trip-plans")
             .appending(path: "history")
             .appending(queryItems: [
-                URLQueryItem(name: "limit", value: "\(limit)")
+                URLQueryItem(name: "limit", value: "\(limit)"),
+                URLQueryItem(name: "travelerId", value: travelerID)
             ])
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
@@ -85,6 +89,9 @@ struct TravelPlannerAPIService: TravelPlanningServicing, Sendable {
         let endpoint = baseURL
             .appending(path: "memory")
             .appending(path: "latest")
+            .appending(queryItems: [
+                URLQueryItem(name: "travelerId", value: travelerID)
+            ])
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -155,7 +162,13 @@ struct TravelPlannerAPIService: TravelPlanningServicing, Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONEncoder().encode(TripPlanRequest(brief: brief, dateFormatter: dateFormatter))
+        request.httpBody = try JSONEncoder().encode(
+            TripPlanRequest(
+                brief: brief,
+                dateFormatter: dateFormatter,
+                travelerId: travelerID
+            )
+        )
         return request
     }
 }

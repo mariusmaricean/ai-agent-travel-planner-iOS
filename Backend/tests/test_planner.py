@@ -414,6 +414,41 @@ class TripPlannerTests(unittest.TestCase):
         self.assertIsNone(restored_store.get(first.id))
         self.assertEqual(restored_store.recent()[0].id, second.id)
 
+    def test_history_store_scopes_records_and_memory_by_traveler(self) -> None:
+        first_memory = [MemoryNote(title="Preference", detail="Likes culture walks.")]
+        second_memory = [MemoryNote(title="Preference", detail="Needs quiet mornings.")]
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "history.json"
+            store = TripPlanHistoryStore(path=path)
+
+            first = store.save(
+                make_request(traveler_id="traveler-a"),
+                TripPlanResponse(trips=[], memory=first_memory),
+            )
+            second = store.save(
+                make_request(traveler_id="traveler-b"),
+                TripPlanResponse(trips=[], memory=second_memory),
+            )
+            restored_store = TripPlanHistoryStore(path=path)
+
+        first_history = restored_store.recent(traveler_id="traveler-a")
+        second_history = restored_store.recent(traveler_id="traveler-b")
+
+        self.assertEqual([record.id for record in first_history], [first.id])
+        self.assertEqual([record.id for record in second_history], [second.id])
+        self.assertEqual(first_history[0].travelerId, "traveler-a")
+        self.assertEqual(first_history[0].request.travelerId, "traveler-a")
+        self.assertIsNone(restored_store.get(second.id, traveler_id="traveler-a"))
+        self.assertEqual(
+            restored_store.latest_memory(traveler_id="traveler-a"),
+            first_memory,
+        )
+        self.assertEqual(
+            restored_store.latest_memory(traveler_id="traveler-b"),
+            second_memory,
+        )
+
     def test_provider_telemetry_handler_emits_run_events(self) -> None:
         store = TripPlanRunStore()
         created = store.create()
@@ -1113,8 +1148,10 @@ class RejectingCriticAgent(ItineraryCriticAgent):
 def make_request(
     rememberPreferences: bool = True,
     memory: Optional[list[MemoryNote]] = None,
+    traveler_id: str | None = None,
 ) -> TripPlanRequest:
     return TripPlanRequest(
+        travelerId=traveler_id,
         origin="New York",
         destination="Lisbon",
         departDate=datetime(2026, 7, 11, 9, tzinfo=timezone.utc),

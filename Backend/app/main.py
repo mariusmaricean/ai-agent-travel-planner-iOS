@@ -49,13 +49,17 @@ async def trip_plans(request: TripPlanRequest) -> TripPlanResponse:
 @app.get("/trip-plans/history", response_model=list[SavedTripPlan])
 async def trip_plan_history(
     limit: int = Query(default=20, ge=1, le=100),
+    traveler_id: str | None = Query(default=None, alias="travelerId"),
 ) -> list[SavedTripPlan]:
-    return history_store.recent(limit=limit)
+    return history_store.recent(limit=limit, traveler_id=traveler_id)
 
 
 @app.get("/trip-plans/history/{plan_id}", response_model=SavedTripPlan)
-async def saved_trip_plan(plan_id: str) -> SavedTripPlan:
-    record = history_store.get(plan_id)
+async def saved_trip_plan(
+    plan_id: str,
+    traveler_id: str | None = Query(default=None, alias="travelerId"),
+) -> SavedTripPlan:
+    record = history_store.get(plan_id, traveler_id=traveler_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Saved trip plan not found.")
 
@@ -63,8 +67,10 @@ async def saved_trip_plan(plan_id: str) -> SavedTripPlan:
 
 
 @app.get("/memory/latest", response_model=list[MemoryNote])
-async def latest_memory() -> list[MemoryNote]:
-    return history_store.latest_memory()
+async def latest_memory(
+    traveler_id: str | None = Query(default=None, alias="travelerId"),
+) -> list[MemoryNote]:
+    return history_store.latest_memory(traveler_id=traveler_id)
 
 
 @app.post("/trip-plans/runs", response_model=TripPlanRunSnapshot)

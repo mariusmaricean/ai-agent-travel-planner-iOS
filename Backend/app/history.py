@@ -7,6 +7,8 @@ from uuid import uuid4
 
 from app.schemas import MemoryNote, SavedTripPlan, TripPlanRequest, TripPlanResponse
 
+DEFAULT_TRAVELER_ID = "local"
+
 
 class TripPlanHistoryStore:
     def __init__(self, path: str | Path | None = None, max_entries: int = 100) -> None:
@@ -31,10 +33,18 @@ class TripPlanHistoryStore:
         request: TripPlanRequest,
         response: TripPlanResponse,
         run_id: str | None = None,
+        traveler_id: str | None = None,
     ) -> SavedTripPlan:
+        normalized_traveler_id = normalize_traveler_id(
+            traveler_id or request.travelerId
+        )
+        normalized_request = request.model_copy(
+            update={"travelerId": normalized_traveler_id}
+        )
         record = SavedTripPlan(
             id=str(uuid4()),
-            request=request,
+            travelerId=normalized_traveler_id,
+            request=normalized_request,
             response=response,
             createdAt=datetime.now(timezone.utc),
             runId=run_id,
@@ -47,24 +57,46 @@ class TripPlanHistoryStore:
 
         return record.model_copy(deep=True)
 
-    def recent(self, limit: int = 20) -> list[SavedTripPlan]:
+    def recent(
+        self,
+        limit: int = 20,
+        traveler_id: str | None = None,
+    ) -> list[SavedTripPlan]:
         normalized_limit = max(1, limit)
+        normalized_traveler_id = normalize_traveler_id(traveler_id)
         with self._lock:
-            records = list(reversed(self._records[-normalized_limit:]))
+            traveler_records = [
+                record
+                for record in self._records
+                if record.travelerId == normalized_traveler_id
+            ]
+            records = list(reversed(traveler_records[-normalized_limit:]))
             return [record.model_copy(deep=True) for record in records]
 
-    def get(self, plan_id: str) -> SavedTripPlan | None:
+    def get(
+        self,
+        plan_id: str,
+        traveler_id: str | None = None,
+    ) -> SavedTripPlan | None:
+        normalized_traveler_id = normalize_traveler_id(traveler_id)
         with self._lock:
             for record in self._records:
-                if record.id == plan_id:
+                if (
+                    record.id == plan_id
+                    and record.travelerId == normalized_traveler_id
+                ):
                     return record.model_copy(deep=True)
 
         return None
 
-    def latest_memory(self) -> list[MemoryNote]:
+    def latest_memory(self, traveler_id: str | None = None) -> list[MemoryNote]:
+        normalized_traveler_id = normalize_traveler_id(traveler_id)
         with self._lock:
             for record in reversed(self._records):
-                if record.response.memory is not None:
+                if (
+                    record.travelerId == normalized_traveler_id
+                    and record.response.memory is not None
+                ):
                     return [note.model_copy(deep=True) for note in record.response.memory]
 
         return []
@@ -120,6 +152,14 @@ def history_store_path() -> Path:
         return path
 
     return backend_directory() / ".data" / "trip_plan_history.json"
+
+
+def normalize_traveler_id(traveler_id: str | None) -> str:
+    normalized = (traveler_id or "").strip()
+    if normalized:
+        return normalized
+
+    return DEFAULT_TRAVELER_ID
 
 
 def backend_directory() -> Path:
