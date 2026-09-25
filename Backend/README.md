@@ -64,7 +64,7 @@ Responsibilities:
 - Progress events: `TripPlanRunStore` persists coordinator and provider telemetry events for iOS polling, while `TripPlanJobQueue` and `TripPlanJobRunner` run planning work outside the request/response lifecycle.
 - History and memory persistence: `TripPlanHistoryStore` saves completed direct plans and completed live-run plans by traveler scope for later retrieval.
 
-The coordinator intentionally allows only one revision pass so request latency and model cost remain bounded. The revised result is critiqued once more before it is returned.
+The coordinator intentionally allows a bounded two-pass revision loop so request latency and model cost remain controlled. The critic scores budget fit, date coverage, pacing, repeated structure, travel-time risk, and constraint handling before the final result is returned.
 
 ## Model-backed Planning
 

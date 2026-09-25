@@ -222,7 +222,7 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(calls, ["Lisbon"])
         self.assertEqual(research.summary, "Lisbon culture research.")
 
-    def test_coordinator_revises_rejected_trip_once(self) -> None:
+    def test_coordinator_marks_trip_when_revision_still_needs_review(self) -> None:
         request = make_request()
         tools = TravelPlanningToolRouter(
             flight_provider=lambda query: [
@@ -262,6 +262,81 @@ class TripPlannerTests(unittest.TestCase):
         self.assertIn("revision-needs-review", response.trips[0].meta)
         self.assertNotIn("Critic revision", response.trips[0].days[-1].detail)
         self.assertIn("Prioritize free sights", response.trips[0].days[-1].detail)
+
+    def test_coordinator_runs_second_revision_when_quality_stays_low(self) -> None:
+        request = make_request()
+        revision_calls: list[int] = []
+
+        def itinerary_reviser(revision_input: ItineraryRevisionInput) -> TripOption:
+            revision_calls.append(revision_input.critic_score)
+            return TripOption(
+                name=revision_input.original_trip.name,
+                route=revision_input.original_trip.route,
+                fare=revision_input.original_trip.fare,
+                score=revision_input.original_trip.score + 3,
+                meta=f"{revision_input.original_trip.meta} | pass-{len(revision_calls)}",
+                days=revision_input.original_trip.days,
+            )
+
+        tools = TravelPlanningToolRouter(
+            flight_provider=lambda query: [
+                FareOption(
+                    name="Provider Fare",
+                    fare=510,
+                    score=80,
+                    meta="provider fare",
+                )
+            ],
+            itinerary_planner=lambda planning_input: [
+                TripOption(
+                    name="Provider Plan",
+                    route="New York -> Lisbon",
+                    fare=510,
+                    score=80,
+                    meta="provider fare",
+                    days=quality_loop_days(),
+                )
+            ],
+            itinerary_reviser=itinerary_reviser,
+        )
+        critic = ApprovesOnThirdCriticAgent()
+        coordinator = TripCoordinatorAgent(
+            tools=tools,
+            critic_agent=critic,
+            max_revision_passes=2,
+        )
+
+        response = coordinator.run(request)
+
+        self.assertEqual(len(revision_calls), 2)
+        self.assertEqual(critic.call_count, 3)
+        self.assertEqual(response.trips[0].score, 90)
+        self.assertIn("pass-2", response.trips[0].meta)
+        self.assertNotIn("revision-needs-review", response.trips[0].meta)
+
+    def test_critic_flags_travel_time_and_missing_coverage(self) -> None:
+        critic = ItineraryCriticAgent()
+        trip = TripOption(
+            name="Risky Plan",
+            route="New York -> Lisbon",
+            fare=620,
+            score=93,
+            meta="test fare",
+            days=[
+                TripDay(
+                    label="D1",
+                    title="Arrival scramble",
+                    detail="Airport transfer, cross-town museum, late dinner.",
+                )
+            ],
+        )
+
+        critique = critic.run(make_request(), trip)
+
+        self.assertFalse(critique.approved)
+        self.assertIn("Trip does not cover enough days", critique.issues[0])
+        self.assertIn("D1 may include unrealistic travel time.", critique.issues)
+        self.assertIn("Cluster activities by neighborhood", critique.recommendations[-1])
 
     def test_coordinator_emits_agent_progress_events(self) -> None:
         events: list[tuple[str, str, str]] = []
@@ -311,8 +386,10 @@ class TripPlannerTests(unittest.TestCase):
                 ("itinerary", "active", "Build itinerary"),
                 ("itinerary", "done", "Build itinerary"),
                 ("critic", "active", "Critic review"),
-                ("critic", "done", "Critic review"),
+                ("revision", "active", "Revise if needed"),
+                ("revision", "active", "Revise if needed"),
                 ("revision", "done", "Revise if needed"),
+                ("critic", "done", "Critic review"),
                 ("memory", "active", "Finalize memory"),
                 ("memory", "done", "Finalize memory"),
             ],
@@ -1288,6 +1365,27 @@ class RejectingCriticAgent(ItineraryCriticAgent):
         )
 
 
+class ApprovesOnThirdCriticAgent(ItineraryCriticAgent):
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def run(
+        self,
+        request: TripPlanRequest,
+        trip: TripOption,
+    ) -> Critique:
+        self.call_count += 1
+        if self.call_count >= 3:
+            return Critique(approved=True, score=90)
+
+        return Critique(
+            approved=False,
+            score=70 + self.call_count,
+            issues=["Trip quality score is below the approval threshold."],
+            recommendations=["Run another concrete revision pass."],
+        )
+
+
 def make_request(
     rememberPreferences: bool = True,
     memory: Optional[list[MemoryNote]] = None,
@@ -1305,6 +1403,17 @@ def make_request(
         mood="Culture",
         memory=memory or [],
     )
+
+
+def quality_loop_days() -> list[TripDay]:
+    return [
+        TripDay(
+            label=f"D{day}",
+            title=f"Day {day}",
+            detail="Neighborhood anchor, flexible backup, and a protected rest block.",
+        )
+        for day in range(1, 6)
+    ]
 
 
 def wait_for_run_status(

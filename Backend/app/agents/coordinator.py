@@ -7,6 +7,7 @@ from app.schemas import DestinationResearch, MemoryNote, TripOption, TripPlanReq
 from app.tools import TravelPlanningToolRouter, add_meta_flag, default_tool_router
 
 ProgressEmitter = Callable[[str, str, str, str], None]
+DEFAULT_MAX_REVISION_PASSES = 2
 
 
 class TripCoordinatorAgent:
@@ -17,12 +18,14 @@ class TripCoordinatorAgent:
         itinerary_agent: ItineraryAgent | None = None,
         critic_agent: ItineraryCriticAgent | None = None,
         progress: ProgressEmitter | None = None,
+        max_revision_passes: int = DEFAULT_MAX_REVISION_PASSES,
     ):
         self.tools = tools
         self.research_agent = research_agent or DestinationResearchAgent(tools)
         self.itinerary_agent = itinerary_agent or ItineraryAgent(tools)
         self.critic_agent = critic_agent or ItineraryCriticAgent()
         self.progress = progress
+        self.max_revision_passes = max(1, max_revision_passes)
 
     def run(self, request: TripPlanRequest) -> TripPlanResponse:
         self.emit(
@@ -125,19 +128,36 @@ class TripCoordinatorAgent:
         if critique.approved:
             return trip, False
 
-        self.emit(
-            step="revision",
-            status="active",
-            title="Revise if needed",
-            detail=f"Revising {trip.name} from critic feedback.",
-        )
-        revised_trip = self.itinerary_agent.revise(request, trip, critique, destination_research)
-        final_critique = self.critic_agent.run(request, revised_trip)
+        revised_trip = trip
+        final_critique = critique
+        for revision_pass in range(1, self.max_revision_passes + 1):
+            self.emit(
+                step="revision",
+                status="active",
+                title="Revise if needed",
+                detail=(
+                    f"Revising {trip.name} from critic feedback "
+                    f"(pass {revision_pass}/{self.max_revision_passes})."
+                ),
+            )
+            revised_trip = self.itinerary_agent.revise(
+                request,
+                revised_trip,
+                final_critique,
+                destination_research,
+            )
+            final_critique = self.critic_agent.run(request, revised_trip)
+            if final_critique.approved:
+                break
+
         self.emit(
             step="revision",
             status="done",
             title="Revise if needed",
-            detail=f"Revised {trip.name}; final critic score {final_critique.score}.",
+            detail=(
+                f"Revised {trip.name}; final critic score "
+                f"{final_critique.score}."
+            ),
         )
         if final_critique.approved:
             return TripOption(
