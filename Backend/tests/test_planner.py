@@ -25,6 +25,7 @@ from app.schemas import (
     TripPlanRequest,
     TripPlanResponse,
 )
+from app.telemetry import capture_provider_telemetry
 from app.tools import (
     AmadeusFlightProvider,
     AmadeusFlightProviderConfig,
@@ -54,6 +55,7 @@ from app.tools import (
     configured_location_resolver,
     iata_location_code,
     local_resolved_location,
+    log_provider_event,
     location_resolution_cache,
     model_backed_destination_researcher,
     model_backed_itinerary_planner,
@@ -402,6 +404,27 @@ class TripPlannerTests(unittest.TestCase):
         self.assertIsNone(restored_store.get(first.id))
         self.assertEqual(restored_store.recent()[0].id, second.id)
 
+    def test_provider_telemetry_handler_emits_run_events(self) -> None:
+        store = TripPlanRunStore()
+        created = store.create()
+
+        with capture_provider_telemetry(created.runId, store):
+            log_provider_event(
+                "flight.mock_fallback",
+                destination="LIS",
+                origin="NYC",
+                reason="missing_amadeus_credentials",
+            )
+
+        snapshot = store.snapshot(created.runId)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.events[0].step, "telemetry")
+        self.assertEqual(snapshot.events[0].status, "done")
+        self.assertEqual(snapshot.events[0].title, "Flight provider fallback")
+        self.assertIn("reason: missing_amadeus_credentials", snapshot.events[0].detail)
+
     def test_trip_plan_job_runner_completes_run_snapshot(self) -> None:
         store = TripPlanRunStore()
         history_store = TripPlanHistoryStore()
@@ -422,6 +445,7 @@ class TripPlannerTests(unittest.TestCase):
         self.assertIsNotNone(snapshot.result)
         self.assertEqual(snapshot.events[0].step, "research")
         self.assertEqual(snapshot.events[-1].step, "memory")
+        self.assertIn("telemetry", [event.step for event in snapshot.events])
         self.assertEqual(len(history_store.recent()), 1)
         self.assertEqual(history_store.recent()[0].runId, created.runId)
 
