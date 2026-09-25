@@ -7,11 +7,23 @@ protocol TravelPlanningServicing: Sendable {
         for brief: TripBrief,
         progress: TravelPlanningProgressHandler?
     ) async throws -> TripPlanResult
+
+    func savedTripHistory(limit: Int) async throws -> [TripPlanResult]
+
+    func latestMemory() async throws -> [MemoryNote]
 }
 
 extension TravelPlanningServicing {
     func makePlan(for brief: TripBrief) async throws -> TripPlanResult {
         try await makePlan(for: brief, progress: nil)
+    }
+
+    func savedTripHistory(limit: Int) async throws -> [TripPlanResult] {
+        []
+    }
+
+    func latestMemory() async throws -> [MemoryNote] {
+        []
     }
 }
 

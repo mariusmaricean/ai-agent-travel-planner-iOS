@@ -82,7 +82,7 @@ struct TripsListView: View {
         case .results:
             return "\(trips.count) option\(trips.count == 1 ? "" : "s") ready"
         case .saved:
-            return "\(trips.count) saved locally"
+            return "\(trips.count) saved"
         }
     }
 
