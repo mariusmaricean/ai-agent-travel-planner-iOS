@@ -7,12 +7,12 @@ struct RunTimelineView: View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(
                 title: "Agent Run",
-                subtitle: viewModel.isRunning ? "Agent is acting" : "\(viewModel.steps.filter { $0.status == .done }.count) actions completed"
+                subtitle: viewModel.timelineSubtitle
             )
 
             HStack(spacing: 10) {
                 MetricCard(value: "\(viewModel.steps.count)", label: "steps", color: TravelPlannerColor.tealSoft)
-                MetricCard(value: "3", label: "calls", color: TravelPlannerColor.limeSoft)
+                MetricCard(value: "\(viewModel.agentStageCount)", label: "agents", color: TravelPlannerColor.limeSoft)
                 MetricCard(value: "\(viewModel.savedCount)", label: "saved", color: TravelPlannerColor.goldSoft)
             }
 
