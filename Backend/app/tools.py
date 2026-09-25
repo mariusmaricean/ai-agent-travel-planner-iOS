@@ -3,8 +3,10 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime
+from threading import RLock
 from typing import Any, Callable, Optional
 
 from dotenv import load_dotenv
@@ -164,6 +166,41 @@ class TravelPlanningToolRouter:
         )
         reviser = self.itinerary_reviser or model_backed_itinerary_reviser
         return reviser(revision_input)
+
+
+class LocationResolutionCache:
+    def __init__(self, max_entries: int = 128) -> None:
+        self.max_entries = max(1, max_entries)
+        self._locations: OrderedDict[str, ResolvedLocation] = OrderedDict()
+        self._lock = RLock()
+
+    def get(self, value: str) -> Optional[ResolvedLocation]:
+        key = normalized_location_name(value)
+        if not key:
+            return None
+
+        with self._lock:
+            location = self._locations.pop(key, None)
+            if location is None:
+                return None
+
+            self._locations[key] = location
+            return location
+
+    def set(self, value: str, location: ResolvedLocation) -> None:
+        key = normalized_location_name(value)
+        if not key:
+            return
+
+        with self._lock:
+            self._locations.pop(key, None)
+            self._locations[key] = location
+            while len(self._locations) > self.max_entries:
+                self._locations.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._locations.clear()
 
 
 def mock_flight_provider(query: FlightSearchQuery) -> list[FareOption]:
@@ -382,8 +419,38 @@ def configured_location_resolver(value: str) -> Optional[ResolvedLocation]:
         return None
 
 
+def cached_location(
+    value: str,
+    cache: LocationResolutionCache,
+    resolver: LocationResolverFunction,
+) -> Optional[ResolvedLocation]:
+    cached = cache.get(value)
+    if cached is not None:
+        return cached
+
+    resolved = resolver(value)
+    if resolved is not None:
+        cache.set(value, resolved)
+
+    return resolved
+
+
+def cached_location_resolver(value: str) -> Optional[ResolvedLocation]:
+    return cached_location(value, location_resolution_cache, configured_location_resolver)
+
+
 def resolve_location(value: str) -> Optional[ResolvedLocation]:
-    return configured_location_resolver(value)
+    return cached_location_resolver(value)
+
+
+def location_cache_max_entries() -> int:
+    try:
+        return int(os.environ.get("LOCATION_CACHE_MAX_ENTRIES", "128"))
+    except ValueError:
+        return 128
+
+
+location_resolution_cache = LocationResolutionCache(max_entries=location_cache_max_entries())
 
 
 def json_response(
@@ -1118,7 +1185,7 @@ def supports_reasoning(model: str) -> bool:
 default_tool_router = TravelPlanningToolRouter(
     flight_provider=configured_flight_provider,
     itinerary_planner=model_backed_itinerary_planner,
-    location_resolver=configured_location_resolver,
+    location_resolver=cached_location_resolver,
     destination_researcher=model_backed_destination_researcher,
     itinerary_reviser=model_backed_itinerary_reviser,
 )

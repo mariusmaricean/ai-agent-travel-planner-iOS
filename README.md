@@ -77,7 +77,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ## Agent Integration Points
 - Set `TRAVEL_PLANNER_API_BASE_URL` to use the live backend instead of the local mock planner.
 - Use `POST /trip-plans/runs` and `GET /trip-plans/runs/{runId}/events` to render live agent progress in the iOS timeline.
-- Configure `FLIGHT_PROVIDER=amadeus` plus Amadeus credentials to resolve city names and use real flight offers; without credentials the backend uses the mock provider.
+- Configure `FLIGHT_PROVIDER=amadeus` plus Amadeus credentials to resolve and cache city names, then use real flight offers; without credentials the backend uses the mock provider.
 - Route `researchDestination(destination, mood, constraints, memory)` to Places, Maps, Weather, or events data.
 - Route `buildItinerary(fares, constraints, memory)` to your planning/model function.
 - Route rejected plans through the backend itinerary reviser so the critic feedback changes the itinerary content.

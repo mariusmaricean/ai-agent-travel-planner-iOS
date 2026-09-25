@@ -28,6 +28,7 @@ from app.tools import (
     FlightSearchQuery,
     ItineraryPlanningInput,
     ItineraryRevisionInput,
+    LocationResolutionCache,
     OpenAIDestinationResearcher,
     OpenAIItineraryPlanner,
     OpenAIItineraryReviser,
@@ -37,10 +38,12 @@ from app.tools import (
     amadeus_fare_options,
     amadeus_location_keyword,
     amadeus_resolved_location,
+    cached_location,
     configured_flight_provider,
     configured_location_resolver,
     iata_location_code,
     local_resolved_location,
+    location_resolution_cache,
     model_backed_destination_researcher,
     model_backed_itinerary_planner,
     rule_based_itinerary_reviser,
@@ -49,6 +52,7 @@ from app.tools import (
 
 class TripPlannerTests(unittest.TestCase):
     def setUp(self) -> None:
+        location_resolution_cache.clear()
         self.openai_api_key = os.environ.pop("OPENAI_API_KEY", None)
         self.amadeus_env = {
             key: os.environ.pop(key, None)
@@ -61,10 +65,12 @@ class TripPlannerTests(unittest.TestCase):
                 "AMADEUS_CURRENCY_CODE",
                 "AMADEUS_MAX_OFFERS",
                 "AMADEUS_ADULTS",
+                "LOCATION_CACHE_MAX_ENTRIES",
             ]
         }
 
     def tearDown(self) -> None:
+        location_resolution_cache.clear()
         if self.openai_api_key is not None:
             os.environ["OPENAI_API_KEY"] = self.openai_api_key
         for key, value in self.amadeus_env.items():
@@ -385,6 +391,46 @@ class TripPlannerTests(unittest.TestCase):
         assert location is not None
         self.assertEqual(location.code, "CLJ")
         self.assertEqual(location.source, "local alias")
+
+    def test_cached_location_uses_normalized_cache_key(self) -> None:
+        cache = LocationResolutionCache()
+        calls: list[str] = []
+
+        def resolver(value: str) -> Optional[ResolvedLocation]:
+            calls.append(value)
+            return ResolvedLocation(
+                query=value,
+                code="CPH",
+                name="Copenhagen",
+                source="test",
+            )
+
+        first = cached_location("Copenhaga", cache, resolver)
+        second = cached_location("copenhaga", cache, resolver)
+
+        self.assertEqual(first, second)
+        self.assertEqual(calls, ["Copenhaga"])
+
+    def test_location_cache_evicts_oldest_entry(self) -> None:
+        cache = LocationResolutionCache(max_entries=1)
+        paris = ResolvedLocation(
+            query="Paris",
+            code="PAR",
+            name="Paris",
+            source="test",
+        )
+        lisbon = ResolvedLocation(
+            query="Lisbon",
+            code="LIS",
+            name="Lisbon",
+            source="test",
+        )
+
+        cache.set("Paris", paris)
+        cache.set("Lisbon", lisbon)
+
+        self.assertIsNone(cache.get("Paris"))
+        self.assertEqual(cache.get("Lisbon"), lisbon)
 
     def test_tool_router_resolves_locations_before_flight_search(self) -> None:
         observed_queries: list[FlightSearchQuery] = []
