@@ -21,8 +21,10 @@ from app.schemas import (
     TripPlanResponse,
 )
 from app.tools import (
+    AmadeusFlightProviderConfig,
     DestinationResearchQuery,
     FareOption,
+    FlightProviderError,
     FlightSearchQuery,
     ItineraryPlanningInput,
     ItineraryRevisionInput,
@@ -31,6 +33,9 @@ from app.tools import (
     OpenAIItineraryReviser,
     OpenAIPlannerConfig,
     TravelPlanningToolRouter,
+    amadeus_fare_options,
+    configured_flight_provider,
+    iata_location_code,
     model_backed_destination_researcher,
     model_backed_itinerary_planner,
     rule_based_itinerary_reviser,
@@ -40,10 +45,28 @@ from app.tools import (
 class TripPlannerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.openai_api_key = os.environ.pop("OPENAI_API_KEY", None)
+        self.amadeus_env = {
+            key: os.environ.pop(key, None)
+            for key in [
+                "FLIGHT_PROVIDER",
+                "AMADEUS_CLIENT_ID",
+                "AMADEUS_CLIENT_SECRET",
+                "AMADEUS_BASE_URL",
+                "AMADEUS_TIMEOUT_SECONDS",
+                "AMADEUS_CURRENCY_CODE",
+                "AMADEUS_MAX_OFFERS",
+                "AMADEUS_ADULTS",
+            ]
+        }
 
     def tearDown(self) -> None:
         if self.openai_api_key is not None:
             os.environ["OPENAI_API_KEY"] = self.openai_api_key
+        for key, value in self.amadeus_env.items():
+            if value is not None:
+                os.environ[key] = value
+            else:
+                os.environ.pop(key, None)
 
     def test_create_trip_plan_returns_contract_shape(self) -> None:
         request = make_request()
@@ -316,6 +339,84 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(research.destination, "Lisbon")
         self.assertIn("Lisbon", research.summary)
         self.assertEqual(len(research.highlights), 3)
+
+    def test_configured_flight_provider_falls_back_without_amadeus_credentials(self) -> None:
+        fares = configured_flight_provider(
+            FlightSearchQuery(
+                origin="New York",
+                destination="Lisbon",
+                depart_date=datetime(2026, 7, 11, 9, tzinfo=timezone.utc),
+                return_date=datetime(2026, 7, 16, 9, tzinfo=timezone.utc),
+                budget=1400,
+            )
+        )
+
+        self.assertEqual(len(fares), 3)
+        self.assertIn("source: mock", fares[0].meta)
+
+    def test_iata_location_code_normalizes_common_city_names(self) -> None:
+        self.assertEqual(iata_location_code("Copenhaga"), "CPH")
+        self.assertEqual(iata_location_code("Cluj-Napoca"), "CLJ")
+        self.assertEqual(iata_location_code("LIS"), "LIS")
+        self.assertIsNone(iata_location_code("Unknown Place"))
+
+    def test_amadeus_config_reads_environment(self) -> None:
+        os.environ["AMADEUS_CLIENT_ID"] = "client"
+        os.environ["AMADEUS_CLIENT_SECRET"] = "secret"
+        os.environ["AMADEUS_BASE_URL"] = "https://example.test"
+        os.environ["AMADEUS_TIMEOUT_SECONDS"] = "7"
+        os.environ["AMADEUS_CURRENCY_CODE"] = "EUR"
+        os.environ["AMADEUS_MAX_OFFERS"] = "2"
+        os.environ["AMADEUS_ADULTS"] = "3"
+
+        config = AmadeusFlightProviderConfig.from_environment()
+
+        self.assertIsNotNone(config)
+        assert config is not None
+        self.assertEqual(config.client_id, "client")
+        self.assertEqual(config.client_secret, "secret")
+        self.assertEqual(config.base_url, "https://example.test")
+        self.assertEqual(config.timeout_seconds, 7)
+        self.assertEqual(config.currency_code, "EUR")
+        self.assertEqual(config.max_offers, 2)
+        self.assertEqual(config.adults, 3)
+
+    def test_amadeus_fare_options_parse_offer_response(self) -> None:
+        fares = amadeus_fare_options(
+            {
+                "data": [
+                    {
+                        "price": {"grandTotal": "423.50"},
+                        "itineraries": [
+                            {
+                                "segments": [
+                                    {"carrierCode": "SK"},
+                                    {"carrierCode": "LH"},
+                                ]
+                            },
+                            {
+                                "segments": [
+                                    {"carrierCode": "LH"},
+                                ]
+                            },
+                        ],
+                    }
+                ]
+            },
+            "USD",
+        )
+
+        self.assertEqual(len(fares), 1)
+        self.assertEqual(fares[0].name, "Amadeus Offer 1")
+        self.assertEqual(fares[0].fare, 423.50)
+        self.assertEqual(fares[0].score, 92)
+        self.assertIn("source: Amadeus", fares[0].meta)
+        self.assertIn("SK/LH", fares[0].meta)
+        self.assertIn("1 connection", fares[0].meta)
+
+    def test_amadeus_fare_options_reject_malformed_payload(self) -> None:
+        with self.assertRaises(FlightProviderError):
+            amadeus_fare_options({"data": {}}, "USD")
 
     def test_openai_planner_request_body_uses_structured_outputs(self) -> None:
         planner = OpenAIItineraryPlanner(OpenAIPlannerConfig(api_key="test-key"))

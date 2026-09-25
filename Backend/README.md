@@ -48,7 +48,7 @@ TripCoordinatorAgent
 
 Responsibilities:
 
-- Flight search: tool through `TravelPlanningToolRouter`.
+- Flight search: `TravelPlanningToolRouter`, using Amadeus Flight Offers when configured and the deterministic mock provider otherwise.
 - Destination research: `DestinationResearchAgent`, using a model-backed research tool when `OPENAI_API_KEY` is configured and a deterministic fallback otherwise.
 - Itinerary planning: `ItineraryAgent`, backed by the existing rule-based or OpenAI planner.
 - Quality control: `ItineraryCriticAgent`, kept deterministic for fast guardrail checks.
@@ -89,7 +89,23 @@ Optional environment variables:
 - `OPENAI_TIMEOUT_SECONDS`: defaults to `30`.
 - `OPENAI_REASONING_EFFORT`: defaults to `low`.
 
+## Flight Provider
+
+The backend can call Amadeus Self-Service Flight Offers Search when credentials are configured. Without credentials, or when `FLIGHT_PROVIDER=mock`, it keeps using the local mock fare provider.
+
+```text
+FLIGHT_PROVIDER=amadeus
+AMADEUS_CLIENT_ID=your-client-id
+AMADEUS_CLIENT_SECRET=your-client-secret
+AMADEUS_BASE_URL=https://test.api.amadeus.com
+AMADEUS_CURRENCY_CODE=USD
+AMADEUS_MAX_OFFERS=3
+AMADEUS_ADULTS=1
+```
+
+The provider accepts three-letter IATA city or airport codes directly. A small local alias table also maps common demo city names such as New York, Lisbon, Copenhagen, and Cluj-Napoca to IATA codes.
+
 ## Next Integration Points
 
-- Replace `search_flights()` in `app/tools.py` with a real flight provider.
+- Expand the IATA lookup from a small alias table to a real locations API.
 - Move long-running work into a job or workflow if provider calls become slow.

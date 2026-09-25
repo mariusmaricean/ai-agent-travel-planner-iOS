@@ -32,7 +32,7 @@ struct MockTravelPlanningService: TravelPlanningServicing, Sendable {
                 route: route,
                 fare: baseFare + 70,
                 score: 94,
-                meta: "\(brief.duration) days | morning outbound | 1 checked bag",
+                meta: "\(brief.duration) days | morning outbound | 1 checked bag | source: local mock",
                 days: [
                     TripDay(label: "D1", title: "Arrive light", detail: "\(focus[0]) after check-in, early dinner near the hotel."),
                     TripDay(label: "D2", title: "Deep day", detail: "\(focus[1]) with a protected two-hour open block."),
@@ -44,7 +44,7 @@ struct MockTravelPlanningService: TravelPlanningServicing, Sendable {
                 route: route,
                 fare: baseFare - 45,
                 score: 88,
-                meta: "\(brief.duration) days | one connection | budget winner",
+                meta: "\(brief.duration) days | one connection | budget winner | source: local mock",
                 days: [
                     TripDay(label: "D1", title: "Fly lean", detail: "Carry-on timing with a low-risk connection window."),
                     TripDay(label: "D2", title: "Local layer", detail: "\(focus[0]) plus a neighborhood dinner reservation."),
@@ -56,7 +56,7 @@ struct MockTravelPlanningService: TravelPlanningServicing, Sendable {
                 route: route,
                 fare: baseFare + 180,
                 score: 91,
-                meta: "\(brief.duration) days | direct flight | aisle-friendly timing",
+                meta: "\(brief.duration) days | direct flight | aisle-friendly timing | source: local mock",
                 days: [
                     TripDay(label: "D1", title: "Direct arrival", detail: "Midday landing, easy transfer, no late-night commitments."),
                     TripDay(label: "D2", title: "Prime slot", detail: "\(focus[1]) anchored by the highest-fit booking window."),
