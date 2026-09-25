@@ -90,9 +90,16 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 The local Swift planner remains useful as a preview/fallback experience. Production intelligence and orchestration should stay behind the backend API.
 
+Run the shared verification script before opening or merging changes:
+
+```bash
+Scripts/ci.sh
+```
+
 ### Backend API
 
 - `POST /trip-plans`: direct trip plan response.
+- `GET /config/status`: non-secret backend configuration health and provider warnings.
 - `GET /trip-plans/history?travelerId=...`: saved completed trip plans for a traveler scope.
 - `GET /trip-plans/history/{planId}?travelerId=...`: saved trip plan detail for a traveler scope.
 - `GET /memory/latest?travelerId=...`: most recent traveler memory for a traveler scope.

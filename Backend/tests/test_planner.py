@@ -8,12 +8,15 @@ from time import monotonic, sleep
 from typing import Optional
 from unittest.mock import patch
 
+from pydantic import ValidationError
+
 from app.agents import (
     Critique,
     DestinationResearchAgent,
     ItineraryCriticAgent,
     TripCoordinatorAgent,
 )
+from app.config import backend_configuration_status
 from app.history import TripPlanHistoryStore
 from app.job_queue import TripPlanJobQueue
 from app.jobs import TripPlanJobRunner, durable_job_queue_enabled
@@ -135,6 +138,52 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(response.trips[0].days[0].label, "D1")
         self.assertIsNotNone(response.memory)
         self.assertEqual(response.memory[-1].title, "Last best option")
+
+    def test_trip_plan_request_rejects_invalid_date_window(self) -> None:
+        with self.assertRaises(ValidationError):
+            TripPlanRequest(
+                origin="New York",
+                destination="Lisbon",
+                departDate=datetime(2026, 7, 16, 9, tzinfo=timezone.utc),
+                returnDate=datetime(2026, 7, 11, 9, tzinfo=timezone.utc),
+                budget=1400,
+                constraints="Window seat.",
+                mood="Culture",
+            )
+
+    def test_trip_plan_request_limits_memory_notes(self) -> None:
+        with self.assertRaises(ValidationError):
+            TripPlanRequest(
+                origin="New York",
+                destination="Lisbon",
+                departDate=datetime(2026, 7, 11, 9, tzinfo=timezone.utc),
+                returnDate=datetime(2026, 7, 16, 9, tzinfo=timezone.utc),
+                budget=1400,
+                constraints="Window seat.",
+                mood="Culture",
+                memory=[
+                    MemoryNote(title="Preference", detail="Likes culture walks.")
+                    for _ in range(21)
+                ],
+            )
+
+    def test_backend_configuration_status_reports_provider_warnings(self) -> None:
+        os.environ["FLIGHT_PROVIDER"] = "amadeus"
+        os.environ["DESTINATION_RESEARCH_PROVIDER"] = "ticketmaster,osm_places"
+        os.environ["TRIP_PLAN_RUN_WORKERS"] = "0"
+
+        status = backend_configuration_status()
+
+        self.assertEqual(status["status"], "warning")
+        self.assertIn(
+            "FLIGHT_PROVIDER=amadeus requires Amadeus credentials.",
+            status["warnings"],
+        )
+        self.assertIn(
+            "Ticketmaster research requires TICKETMASTER_API_KEY.",
+            status["warnings"],
+        )
+        self.assertIn("TRIP_PLAN_RUN_WORKERS must be at least 1.", status["warnings"])
 
     def test_create_trip_plan_routes_provider_functions(self) -> None:
         calls: list[str] = []

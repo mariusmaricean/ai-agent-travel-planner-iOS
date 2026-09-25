@@ -1,52 +1,62 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class MemoryNote(BaseModel):
-    title: str
-    detail: str
+    title: str = Field(min_length=1, max_length=80)
+    detail: str = Field(min_length=1, max_length=500)
 
 
 class TripPlanRequest(BaseModel):
-    travelerId: Optional[str] = None
-    origin: str
-    destination: str
+    travelerId: Optional[str] = Field(default=None, max_length=120)
+    origin: str = Field(min_length=1, max_length=80)
+    destination: str = Field(min_length=1, max_length=80)
     departDate: datetime
     returnDate: datetime
-    budget: float = Field(gt=0)
-    constraints: str = ""
+    budget: float = Field(gt=0, le=100_000)
+    constraints: str = Field(default="", max_length=1000)
     rememberPreferences: bool = True
-    mood: str
-    memory: list[MemoryNote] = Field(default_factory=list)
+    mood: str = Field(min_length=1, max_length=40)
+    memory: list[MemoryNote] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_date_window(self) -> "TripPlanRequest":
+        if self.returnDate <= self.departDate:
+            raise ValueError("returnDate must be after departDate.")
+
+        if (self.returnDate - self.departDate).days > 30:
+            raise ValueError("Trip date range cannot exceed 30 days.")
+
+        return self
 
 
 class TripDay(BaseModel):
-    label: str
-    title: str
-    detail: str
+    label: str = Field(min_length=1, max_length=12)
+    title: str = Field(min_length=1, max_length=80)
+    detail: str = Field(min_length=1, max_length=800)
 
 
 class TripOption(BaseModel):
-    name: str
-    route: str
+    name: str = Field(min_length=1, max_length=80)
+    route: str = Field(min_length=1, max_length=160)
     fare: float
     score: int
-    meta: str
-    days: list[TripDay]
+    meta: str = Field(max_length=240)
+    days: list[TripDay] = Field(default_factory=list, max_length=30)
 
 
 class DestinationResearch(BaseModel):
-    destination: str
-    summary: str
-    highlights: list[str] = Field(default_factory=list)
-    cautions: list[str] = Field(default_factory=list)
-    local_tips: list[str] = Field(default_factory=list)
+    destination: str = Field(max_length=80)
+    summary: str = Field(max_length=2000)
+    highlights: list[str] = Field(default_factory=list, max_length=20)
+    cautions: list[str] = Field(default_factory=list, max_length=20)
+    local_tips: list[str] = Field(default_factory=list, max_length=20)
 
 
 class TripPlanResponse(BaseModel):
-    trips: list[TripOption]
+    trips: list[TripOption] = Field(default_factory=list, max_length=10)
     memory: Optional[list[MemoryNote]] = None
 
 
