@@ -39,6 +39,26 @@ final class AgentViewModel: ObservableObject {
         runState.title
     }
 
+    var completedStepCount: Int {
+        steps.filter { $0.status == .done }.count
+    }
+
+    var agentStageCount: Int {
+        3
+    }
+
+    var timelineSubtitle: String {
+        if let activeStep = steps.first(where: { $0.status == .active }) {
+            return activeStep.title
+        }
+
+        if case .failed = runState {
+            return "Agent stopped before final result"
+        }
+
+        return "\(completedStepCount) actions completed"
+    }
+
     var isRunning: Bool {
         runState.isRunning
     }
@@ -67,22 +87,72 @@ final class AgentViewModel: ObservableObject {
         runState = .running
         trips = []
         steps = makeSteps()
-
-        for index in steps.indices {
-            steps[index].status = .active
-            try? await Task.sleep(nanoseconds: 520_000_000)
-            steps[index].status = .done
-        }
+        let progressTask = Task { await animateAgentProgress() }
 
         do {
             let result = try await planningService.makePlan(for: currentBrief)
+            progressTask.cancel()
+            finishProgress()
             trips = result.trips
             activeTripID = result.trips.first?.id
             applyMemory(from: result)
             runState = .done
             save()
         } catch {
+            progressTask.cancel()
+            failProgress()
             runState = .failed(error.localizedDescription)
+        }
+    }
+
+    private func animateAgentProgress() async {
+        for index in steps.indices {
+            guard !Task.isCancelled else { return }
+
+            activateStep(at: index)
+
+            do {
+                try await Task.sleep(for: .milliseconds(560))
+            } catch {
+                return
+            }
+
+            guard !Task.isCancelled else { return }
+            completeStep(at: index)
+        }
+    }
+
+    private func activateStep(at index: Int) {
+        guard steps.indices.contains(index) else { return }
+
+        for stepIndex in steps.indices where stepIndex < index && steps[stepIndex].status != .failed {
+            steps[stepIndex].status = .done
+        }
+
+        if steps[index].status == .queued {
+            steps[index].status = .active
+        }
+    }
+
+    private func completeStep(at index: Int) {
+        guard steps.indices.contains(index), steps[index].status == .active else { return }
+        steps[index].status = .done
+    }
+
+    private func finishProgress() {
+        for index in steps.indices {
+            steps[index].status = .done
+        }
+    }
+
+    private func failProgress() {
+        if let activeIndex = steps.firstIndex(where: { $0.status == .active }) {
+            steps[activeIndex].status = .failed
+            return
+        }
+
+        if let queuedIndex = steps.firstIndex(where: { $0.status == .queued }) {
+            steps[queuedIndex].status = .failed
         }
     }
 
@@ -243,25 +313,37 @@ final class AgentViewModel: ObservableObject {
 
         return [
             RunStep(
-                title: "Understand trip brief",
-                detail: "\(origin) to \(destination), \(mood.rawValue.lowercased()) pace, \(dollars(budget)) ceiling",
-                tag: "reason",
-                symbol: "sparkle.magnifyingglass"
+                title: "Research destination",
+                detail: "DestinationResearchAgent studies \(destination), \(mood.rawValue.lowercased()) goals, constraints, and memory",
+                tag: "research",
+                symbol: "binoculars"
             ),
             RunStep(
-                title: "Search fare inventory",
-                detail: "searchFlights(origin, destination, dates, budget)",
+                title: "Search flights",
+                detail: "TravelPlanningToolRouter.search_flights() checks route, dates, and \(dollars(budget)) ceiling",
                 tag: "tool call",
                 symbol: "airplane.departure"
             ),
             RunStep(
-                title: "Compose itinerary",
-                detail: "buildItinerary(fares, constraints, memory)",
-                tag: "tool call",
+                title: "Build itinerary",
+                detail: "ItineraryAgent turns fares and destination research into trip options",
+                tag: "planning",
                 symbol: "map"
             ),
             RunStep(
-                title: "Update state",
+                title: "Critic review",
+                detail: "ItineraryCriticAgent checks budget, constraints, pacing, and missing days",
+                tag: "guardrail",
+                symbol: "checklist"
+            ),
+            RunStep(
+                title: "Revise if needed",
+                detail: "Rejected plans go through ItineraryAgent.revise() before the final response",
+                tag: "feedback",
+                symbol: "arrow.triangle.2.circlepath"
+            ),
+            RunStep(
+                title: "Finalize memory",
                 detail: memoryDetail,
                 tag: "memory",
                 symbol: "externaldrive"

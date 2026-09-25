@@ -4,6 +4,7 @@ enum StepStatus: String, Codable, Sendable {
     case queued
     case active
     case done
+    case failed
 }
 
 struct RunStep: Identifiable, Codable, Sendable {
