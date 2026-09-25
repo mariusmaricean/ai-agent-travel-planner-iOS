@@ -6,7 +6,7 @@ import urllib.parse
 import urllib.request
 from collections import OrderedDict
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from threading import RLock
 from typing import Any, Callable, Optional
 
@@ -66,6 +66,16 @@ class WeatherResearchSummary:
     max_temperature_c: float
     precipitation_probability_max: Optional[float]
     weather_code: Optional[int]
+
+
+@dataclass(frozen=True)
+class TicketmasterEvent:
+    name: str
+    venue: str
+    city: str
+    local_start: str
+    classification: str
+    url: str
 
 
 @dataclass(frozen=True)
@@ -898,6 +908,98 @@ class OpenMeteoDestinationResearchProvider:
         return summary
 
 
+@dataclass(frozen=True)
+class TicketmasterEventsProviderConfig:
+    api_key: str
+    events_url: str = "https://app.ticketmaster.com/discovery/v2/events.json"
+    timeout_seconds: float = 12
+    max_events: int = 3
+    country_code: str = ""
+
+    @classmethod
+    def from_environment(cls) -> Optional["TicketmasterEventsProviderConfig"]:
+        api_key = os.environ.get("TICKETMASTER_API_KEY", "").strip()
+        if not api_key:
+            return None
+
+        try:
+            timeout_seconds = float(os.environ.get("TICKETMASTER_TIMEOUT_SECONDS", "12"))
+        except ValueError:
+            timeout_seconds = 12
+
+        try:
+            max_events = int(os.environ.get("TICKETMASTER_MAX_EVENTS", "3"))
+        except ValueError:
+            max_events = 3
+
+        return cls(
+            api_key=api_key,
+            events_url=os.environ.get(
+                "TICKETMASTER_EVENTS_URL",
+                "https://app.ticketmaster.com/discovery/v2/events.json",
+            ).strip()
+            or "https://app.ticketmaster.com/discovery/v2/events.json",
+            timeout_seconds=timeout_seconds,
+            max_events=max(1, min(max_events, 10)),
+            country_code=os.environ.get("TICKETMASTER_COUNTRY_CODE", "").strip().upper(),
+        )
+
+
+@dataclass(frozen=True)
+class TicketmasterEventsProvider:
+    config: TicketmasterEventsProviderConfig
+
+    @classmethod
+    def from_environment(cls) -> Optional["TicketmasterEventsProvider"]:
+        config = TicketmasterEventsProviderConfig.from_environment()
+        if config is None:
+            return None
+
+        return cls(config=config)
+
+    def research(self, query: DestinationResearchQuery) -> DestinationResearch:
+        events = self.events(query)
+        if not events:
+            raise DestinationResearchProviderError(
+                f"Ticketmaster returned no events for {query.destination}."
+            )
+
+        return ticketmaster_destination_research(query, events)
+
+    def events(self, query: DestinationResearchQuery) -> list[TicketmasterEvent]:
+        params: dict[str, Any] = {
+            "apikey": self.config.api_key,
+            "city": query.destination,
+            "startDateTime": ticketmaster_datetime(query.depart_date),
+            "endDateTime": ticketmaster_datetime(query.return_date),
+            "size": self.config.max_events,
+            "sort": "date,asc",
+            "locale": "*",
+        }
+        if self.config.country_code:
+            params["countryCode"] = self.config.country_code
+
+        request = urllib.request.Request(
+            url=f"{self.config.events_url}?{urllib.parse.urlencode(params)}",
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+
+        try:
+            payload = json_response(request, self.config.timeout_seconds, "Ticketmaster events")
+        except FlightProviderError as error:
+            raise DestinationResearchProviderError(str(error)) from error
+
+        events = ticketmaster_events(payload)
+        log_provider_event(
+            "research.ticketmaster_events",
+            destination=query.destination,
+            event_count=len(events),
+            provider="ticketmaster",
+        )
+        return events[: self.config.max_events]
+
+
 def configured_destination_research_provider(
     query: DestinationResearchQuery,
 ) -> Optional[DestinationResearch]:
@@ -905,23 +1007,46 @@ def configured_destination_research_provider(
     if provider_name in ("", "mock"):
         return None
 
-    if provider_name not in ("open_meteo", "open-meteo", "weather"):
+    if provider_name in ("open_meteo", "open-meteo", "weather"):
+        try:
+            return OpenMeteoDestinationResearchProvider.from_environment().research(query)
+        except (DestinationResearchProviderError, ValueError) as error:
+            log_provider_event(
+                "research.provider_failure",
+                provider="open_meteo",
+                destination=query.destination,
+                error=str(error),
+            )
+            return None
+
+    if provider_name in ("ticketmaster", "ticketmaster_events", "events"):
+        provider = TicketmasterEventsProvider.from_environment()
+        if provider is None:
+            log_provider_event(
+                "research.provider_failure",
+                provider="ticketmaster",
+                destination=query.destination,
+                error="missing_ticketmaster_api_key",
+            )
+            return None
+
+        try:
+            return provider.research(query)
+        except (DestinationResearchProviderError, ValueError) as error:
+            log_provider_event(
+                "research.provider_failure",
+                provider="ticketmaster",
+                destination=query.destination,
+                error=str(error),
+            )
+            return None
+
+    else:
         log_provider_event(
             "research.provider_failure",
             provider=provider_name,
             destination=query.destination,
             error="unknown provider",
-        )
-        return None
-
-    try:
-        return OpenMeteoDestinationResearchProvider.from_environment().research(query)
-    except (DestinationResearchProviderError, ValueError) as error:
-        log_provider_event(
-            "research.provider_failure",
-            provider="open_meteo",
-            destination=query.destination,
-            error=str(error),
         )
         return None
 
@@ -1032,6 +1157,151 @@ def weather_destination_research(
             "Treat weather as near-term planning context and recheck close to departure.",
             f"Traveler context: {memory_tip}",
         ],
+    )
+
+
+def ticketmaster_destination_research(
+    query: DestinationResearchQuery,
+    events: list[TicketmasterEvent],
+) -> DestinationResearch:
+    event_summaries = [ticketmaster_event_summary(event) for event in events]
+    memory_tip = query.memory[0].detail if query.memory else "No saved traveler preference yet."
+    return DestinationResearch(
+        destination=query.destination,
+        summary=(
+            f"{query.destination} research includes {len(events)} Ticketmaster "
+            f"event option{'' if len(events) == 1 else 's'} during the trip window."
+        ),
+        highlights=event_summaries,
+        cautions=research_cautions(query)
+        + [
+            "Confirm event availability, ticket prices, and venue timing before booking.",
+            "Keep events as optional anchors so the itinerary can survive sold-out nights.",
+        ],
+        local_tips=[
+            "Use live events to anchor one evening, then keep nearby dining or transit flexible.",
+            f"Traveler context: {memory_tip}",
+        ],
+    )
+
+
+def ticketmaster_event_summary(event: TicketmasterEvent) -> str:
+    venue = f" at {event.venue}" if event.venue else ""
+    local_start = f" on {event.local_start}" if event.local_start else ""
+    classification = f" ({event.classification})" if event.classification else ""
+    return f"{event.name}{classification}{venue}{local_start}"
+
+
+def ticketmaster_events(payload: dict[str, Any]) -> list[TicketmasterEvent]:
+    embedded = payload.get("_embedded", {})
+    if not isinstance(embedded, dict):
+        return []
+
+    event_payloads = embedded.get("events", [])
+    if not isinstance(event_payloads, list):
+        return []
+
+    events: list[TicketmasterEvent] = []
+    for event_payload in event_payloads:
+        if not isinstance(event_payload, dict):
+            continue
+
+        event = ticketmaster_event(event_payload)
+        if event is not None:
+            events.append(event)
+
+    return events
+
+
+def ticketmaster_event(payload: dict[str, Any]) -> Optional[TicketmasterEvent]:
+    name = payload.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+
+    venue = first_ticketmaster_venue(payload)
+    return TicketmasterEvent(
+        name=name,
+        venue=venue.get("name", ""),
+        city=venue.get("city", ""),
+        local_start=ticketmaster_event_start(payload),
+        classification=ticketmaster_event_classification(payload),
+        url=payload.get("url") if isinstance(payload.get("url"), str) else "",
+    )
+
+
+def first_ticketmaster_venue(payload: dict[str, Any]) -> dict[str, str]:
+    embedded = payload.get("_embedded", {})
+    if not isinstance(embedded, dict):
+        return {}
+
+    venues = embedded.get("venues", [])
+    if not isinstance(venues, list) or not venues:
+        return {}
+
+    venue = venues[0]
+    if not isinstance(venue, dict):
+        return {}
+
+    city_payload = venue.get("city", {})
+    city = city_payload.get("name") if isinstance(city_payload, dict) else ""
+    name = venue.get("name")
+    return {
+        "name": name if isinstance(name, str) else "",
+        "city": city if isinstance(city, str) else "",
+    }
+
+
+def ticketmaster_event_start(payload: dict[str, Any]) -> str:
+    dates = payload.get("dates", {})
+    if not isinstance(dates, dict):
+        return ""
+
+    start = dates.get("start", {})
+    if not isinstance(start, dict):
+        return ""
+
+    local_date = start.get("localDate")
+    local_time = start.get("localTime")
+    if isinstance(local_date, str) and isinstance(local_time, str):
+        return f"{local_date} {local_time}"
+    if isinstance(local_date, str):
+        return local_date
+
+    date_time = start.get("dateTime")
+    return date_time if isinstance(date_time, str) else ""
+
+
+def ticketmaster_event_classification(payload: dict[str, Any]) -> str:
+    classifications = payload.get("classifications", [])
+    if not isinstance(classifications, list) or not classifications:
+        return ""
+
+    classification = classifications[0]
+    if not isinstance(classification, dict):
+        return ""
+
+    names = []
+    for key in ("segment", "genre", "subGenre"):
+        value = classification.get(key, {})
+        if not isinstance(value, dict):
+            continue
+
+        name = value.get("name")
+        if isinstance(name, str) and name and name != "Undefined" and name not in names:
+            names.append(name)
+
+    return " / ".join(names)
+
+
+def ticketmaster_datetime(value: datetime) -> str:
+    if value.tzinfo is None:
+        return value.replace(microsecond=0).isoformat()
+
+    return (
+        value.astimezone(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
     )
 
 

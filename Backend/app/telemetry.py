@@ -92,6 +92,7 @@ def provider_event_title(payload: dict[str, Any]) -> str:
         "research.open_meteo_forecast": "Weather forecast added",
         "research.open_meteo_geocode": "Weather location found",
         "research.provider_failure": "Research provider fallback",
+        "research.ticketmaster_events": "Event provider results",
     }
     return titles.get(event, "Provider telemetry")
 
