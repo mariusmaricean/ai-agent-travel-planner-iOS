@@ -3,6 +3,7 @@ import os
 import unittest
 from datetime import datetime, timezone
 from typing import Optional
+from unittest.mock import patch
 
 from app.agents import (
     Critique,
@@ -21,6 +22,7 @@ from app.schemas import (
     TripPlanResponse,
 )
 from app.tools import (
+    AmadeusFlightProvider,
     AmadeusFlightProviderConfig,
     DestinationResearchQuery,
     FareOption,
@@ -33,6 +35,7 @@ from app.tools import (
     OpenAIItineraryPlanner,
     OpenAIItineraryReviser,
     OpenAIPlannerConfig,
+    PROVIDER_LOGGER_NAME,
     ResolvedLocation,
     TravelPlanningToolRouter,
     amadeus_fare_options,
@@ -352,18 +355,42 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(len(research.highlights), 3)
 
     def test_configured_flight_provider_falls_back_without_amadeus_credentials(self) -> None:
-        fares = configured_flight_provider(
-            FlightSearchQuery(
-                origin="New York",
-                destination="Lisbon",
-                depart_date=datetime(2026, 7, 11, 9, tzinfo=timezone.utc),
-                return_date=datetime(2026, 7, 16, 9, tzinfo=timezone.utc),
-                budget=1400,
+        with self.assertLogs(PROVIDER_LOGGER_NAME, level="INFO") as logs:
+            fares = configured_flight_provider(
+                FlightSearchQuery(
+                    origin="New York",
+                    destination="Lisbon",
+                    depart_date=datetime(2026, 7, 11, 9, tzinfo=timezone.utc),
+                    return_date=datetime(2026, 7, 16, 9, tzinfo=timezone.utc),
+                    budget=1400,
+                )
             )
-        )
 
         self.assertEqual(len(fares), 3)
         self.assertIn("source: mock", fares[0].meta)
+        self.assertLogContains(logs, '"event": "flight.mock_fallback"')
+        self.assertLogContains(logs, '"reason": "missing_amadeus_credentials"')
+
+    def test_configured_flight_provider_logs_provider_failure(self) -> None:
+        class FailingProvider:
+            def search(self, query: FlightSearchQuery) -> list[FareOption]:
+                raise FlightProviderError("Amadeus unavailable")
+
+        with patch("app.tools.AmadeusFlightProvider.from_environment", return_value=FailingProvider()):
+            with self.assertLogs(PROVIDER_LOGGER_NAME, level="INFO") as logs:
+                fares = configured_flight_provider(
+                    FlightSearchQuery(
+                        origin="CPH",
+                        destination="CLJ",
+                        depart_date=datetime(2026, 7, 11, 9, tzinfo=timezone.utc),
+                        return_date=datetime(2026, 7, 16, 9, tzinfo=timezone.utc),
+                        budget=600,
+                    )
+                )
+
+        self.assertEqual(len(fares), 3)
+        self.assertLogContains(logs, '"event": "flight.provider_failure"')
+        self.assertLogContains(logs, '"event": "flight.mock_fallback"')
 
     def test_iata_location_code_normalizes_common_city_names(self) -> None:
         self.assertEqual(iata_location_code("Copenhaga"), "CPH")
@@ -372,7 +399,8 @@ class TripPlannerTests(unittest.TestCase):
         self.assertIsNone(iata_location_code("Unknown Place"))
 
     def test_local_location_resolver_returns_alias_metadata(self) -> None:
-        location = local_resolved_location("Copenhaga")
+        with self.assertLogs(PROVIDER_LOGGER_NAME, level="INFO") as logs:
+            location = local_resolved_location("Copenhaga")
 
         self.assertEqual(
             location,
@@ -383,6 +411,8 @@ class TripPlannerTests(unittest.TestCase):
                 source="local alias",
             ),
         )
+        self.assertLogContains(logs, '"event": "location.local_alias"')
+        self.assertLogContains(logs, '"code": "CPH"')
 
     def test_configured_location_resolver_uses_local_alias_without_credentials(self) -> None:
         location = configured_location_resolver("Cluj-Napoca")
@@ -406,10 +436,12 @@ class TripPlannerTests(unittest.TestCase):
             )
 
         first = cached_location("Copenhaga", cache, resolver)
-        second = cached_location("copenhaga", cache, resolver)
+        with self.assertLogs(PROVIDER_LOGGER_NAME, level="INFO") as logs:
+            second = cached_location("copenhaga", cache, resolver)
 
         self.assertEqual(first, second)
         self.assertEqual(calls, ["Copenhaga"])
+        self.assertLogContains(logs, '"event": "location.cache_hit"')
 
     def test_location_cache_evicts_oldest_entry(self) -> None:
         cache = LocationResolutionCache(max_entries=1)
@@ -506,6 +538,63 @@ class TripPlannerTests(unittest.TestCase):
     def test_amadeus_resolved_location_rejects_malformed_payload(self) -> None:
         with self.assertRaises(FlightProviderError):
             amadeus_resolved_location({"data": {}}, "Copenhaga")
+
+    def test_amadeus_remote_location_lookup_logs_hit(self) -> None:
+        provider = AmadeusFlightProvider(
+            AmadeusFlightProviderConfig(client_id="client", client_secret="secret")
+        )
+
+        with patch(
+            "app.tools.json_response",
+            return_value={
+                "data": [
+                    {
+                        "name": "COPENHAGEN",
+                        "iataCode": "CPH",
+                    }
+                ]
+            },
+        ):
+            with self.assertLogs(PROVIDER_LOGGER_NAME, level="INFO") as logs:
+                location = provider.remote_resolved_location("Copenhaga", "token")
+
+        self.assertIsNotNone(location)
+        assert location is not None
+        self.assertEqual(location.code, "CPH")
+        self.assertLogContains(logs, '"event": "location.amadeus_lookup"')
+        self.assertLogContains(logs, '"result": "hit"')
+
+    def test_amadeus_search_logs_flight_offers(self) -> None:
+        provider = AmadeusFlightProvider(
+            AmadeusFlightProviderConfig(client_id="client", client_secret="secret")
+        )
+        query = FlightSearchQuery(
+            origin="CPH",
+            destination="CLJ",
+            depart_date=datetime(2026, 7, 11, 9, tzinfo=timezone.utc),
+            return_date=datetime(2026, 7, 16, 9, tzinfo=timezone.utc),
+            budget=600,
+        )
+
+        with patch.object(AmadeusFlightProvider, "access_token", return_value="token"):
+            with patch.object(
+                AmadeusFlightProvider,
+                "flight_offers",
+                return_value={
+                    "data": [
+                        {
+                            "price": {"grandTotal": "423.50"},
+                            "itineraries": [{"segments": [{"carrierCode": "SK"}]}],
+                        }
+                    ]
+                },
+            ):
+                with self.assertLogs(PROVIDER_LOGGER_NAME, level="INFO") as logs:
+                    fares = provider.search(query)
+
+        self.assertEqual(len(fares), 1)
+        self.assertLogContains(logs, '"event": "flight.amadeus_offers"')
+        self.assertLogContains(logs, '"offer_count": 1')
 
     def test_amadeus_config_reads_environment(self) -> None:
         os.environ["AMADEUS_CLIENT_ID"] = "client"
@@ -628,6 +717,9 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(prompt_payload["critique"]["score"], 76)
         self.assertEqual(prompt_payload["destinationResearch"]["summary"], "Lisbon culture research.")
         self.assertIn("Return exactly one revised option", prompt_payload["successCriteria"][0])
+
+    def assertLogContains(self, logs, value: str) -> None:
+        self.assertIn(value, "\n".join(logs.output))
 
 
 class RejectingCriticAgent(ItineraryCriticAgent):

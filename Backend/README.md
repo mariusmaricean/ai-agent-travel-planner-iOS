@@ -102,11 +102,14 @@ AMADEUS_CURRENCY_CODE=USD
 AMADEUS_MAX_OFFERS=3
 AMADEUS_ADULTS=1
 LOCATION_CACHE_MAX_ENTRIES=128
+PROVIDER_LOG_LEVEL=INFO
 ```
 
 The provider accepts three-letter IATA city or airport codes directly. It resolves city names through Amadeus Airport & City Search when Amadeus credentials are configured, with a small local alias table for common demo names such as New York, Lisbon, Copenhagen, and Cluj-Napoca. Successful resolutions are cached in memory per backend process.
 
+Provider decisions are logged through the `travel_planner.providers` logger as `provider_event` records. Current events cover local aliases, IATA input, cache hits/stores, Amadeus location lookups, Amadeus flight offers, provider failures, and mock fallbacks.
+
 ## Next Integration Points
 
-- Add provider telemetry so resolved locations, mock fallbacks, and provider failures are visible in logs.
+- Surface provider telemetry in live run events or a monitoring dashboard.
 - Move long-running work into a job or workflow if provider calls become slow.

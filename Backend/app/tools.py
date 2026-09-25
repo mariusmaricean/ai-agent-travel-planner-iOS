@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import urllib.error
 import urllib.parse
@@ -14,6 +15,12 @@ from dotenv import load_dotenv
 from app.schemas import DestinationResearch, MemoryNote, TripDay, TripOption, TripPlanRequest
 
 load_dotenv()
+
+PROVIDER_LOGGER_NAME = "travel_planner.providers"
+provider_logger = logging.getLogger(PROVIDER_LOGGER_NAME)
+provider_logger.setLevel(
+    getattr(logging, os.environ.get("PROVIDER_LOG_LEVEL", "INFO").upper(), logging.INFO)
+)
 
 
 @dataclass(frozen=True)
@@ -297,6 +304,12 @@ class AmadeusFlightProvider:
         if not fares:
             raise FlightProviderError("Amadeus returned no flight offers.")
 
+        log_provider_event(
+            "flight.amadeus_offers",
+            origin=origin.code,
+            destination=destination.code,
+            offer_count=len(fares),
+        )
         return fares
 
     def resolve_location(self, value: str) -> Optional[ResolvedLocation]:
@@ -314,6 +327,11 @@ class AmadeusFlightProvider:
     ) -> Optional[ResolvedLocation]:
         keyword = amadeus_location_keyword(value)
         if keyword is None:
+            log_provider_event(
+                "location.amadeus_lookup",
+                query=value,
+                result="skipped",
+            )
             return None
 
         params = urllib.parse.urlencode(
@@ -332,7 +350,15 @@ class AmadeusFlightProvider:
             method="GET",
         )
         payload = json_response(request, self.config.timeout_seconds, "Amadeus location search")
-        return amadeus_resolved_location(payload, value)
+        location = amadeus_resolved_location(payload, value)
+        log_provider_event(
+            "location.amadeus_lookup",
+            code=location.code if location is not None else None,
+            keyword=keyword,
+            query=value,
+            result="hit" if location is not None else "miss",
+        )
+        return location
 
     def access_token(self) -> str:
         body = urllib.parse.urlencode(
@@ -387,16 +413,41 @@ class AmadeusFlightProvider:
 def configured_flight_provider(query: FlightSearchQuery) -> list[FareOption]:
     provider_name = os.environ.get("FLIGHT_PROVIDER", "").strip().lower()
     if provider_name == "mock":
+        log_provider_event(
+            "flight.mock_fallback",
+            origin=query.origin,
+            destination=query.destination,
+            reason="configured_mock",
+        )
         return mock_flight_provider(query)
 
     provider = AmadeusFlightProvider.from_environment()
 
     if provider is None:
+        log_provider_event(
+            "flight.mock_fallback",
+            origin=query.origin,
+            destination=query.destination,
+            reason="missing_amadeus_credentials",
+        )
         return mock_flight_provider(query)
 
     try:
         return provider.search(query)
-    except FlightProviderError:
+    except FlightProviderError as error:
+        log_provider_event(
+            "flight.provider_failure",
+            origin=query.origin,
+            destination=query.destination,
+            provider="amadeus",
+            error=str(error),
+        )
+        log_provider_event(
+            "flight.mock_fallback",
+            origin=query.origin,
+            destination=query.destination,
+            reason="provider_failure",
+        )
         return mock_flight_provider(query)
 
 
@@ -415,7 +466,13 @@ def configured_location_resolver(value: str) -> Optional[ResolvedLocation]:
 
     try:
         return provider.resolve_location(value)
-    except FlightProviderError:
+    except FlightProviderError as error:
+        log_provider_event(
+            "location.provider_failure",
+            provider="amadeus",
+            query=value,
+            error=str(error),
+        )
         return None
 
 
@@ -426,11 +483,23 @@ def cached_location(
 ) -> Optional[ResolvedLocation]:
     cached = cache.get(value)
     if cached is not None:
+        log_provider_event(
+            "location.cache_hit",
+            code=cached.code,
+            query=value,
+            source=cached.source,
+        )
         return cached
 
     resolved = resolver(value)
     if resolved is not None:
         cache.set(value, resolved)
+        log_provider_event(
+            "location.cache_store",
+            code=resolved.code,
+            query=value,
+            source=resolved.source,
+        )
 
     return resolved
 
@@ -451,6 +520,14 @@ def location_cache_max_entries() -> int:
 
 
 location_resolution_cache = LocationResolutionCache(max_entries=location_cache_max_entries())
+
+
+def log_provider_event(event: str, **details: Any) -> None:
+    payload = {
+        "event": event,
+        **{key: value for key, value in details.items() if value is not None},
+    }
+    provider_logger.info("provider_event %s", json.dumps(payload, sort_keys=True, default=str))
 
 
 def json_response(
@@ -607,6 +684,11 @@ def iata_location_code(value: str) -> Optional[str]:
 def local_resolved_location(value: str) -> Optional[ResolvedLocation]:
     stripped = value.strip().upper()
     if len(stripped) == 3 and stripped.isalpha():
+        log_provider_event(
+            "location.iata_input",
+            code=stripped,
+            query=value,
+        )
         return ResolvedLocation(
             query=value,
             code=stripped,
@@ -618,6 +700,11 @@ def local_resolved_location(value: str) -> Optional[ResolvedLocation]:
     if code is None:
         return None
 
+    log_provider_event(
+        "location.local_alias",
+        code=code,
+        query=value,
+    )
     return ResolvedLocation(
         query=value,
         code=code,
