@@ -79,6 +79,13 @@ class TicketmasterEvent:
 
 
 @dataclass(frozen=True)
+class OpenStreetMapPlace:
+    name: str
+    category: str
+    display_name: str
+
+
+@dataclass(frozen=True)
 class DestinationResearchQuery:
     origin: str
     destination: str
@@ -565,7 +572,7 @@ def json_response(
     request: urllib.request.Request,
     timeout_seconds: float,
     context: str,
-) -> dict[str, Any]:
+) -> Any:
     try:
         with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
             payload = json.loads(response.read().decode("utf-8"))
@@ -1000,13 +1007,150 @@ class TicketmasterEventsProvider:
         return events[: self.config.max_events]
 
 
+@dataclass(frozen=True)
+class OpenStreetMapPlacesProviderConfig:
+    search_url: str = "https://nominatim.openstreetmap.org/search"
+    timeout_seconds: float = 12
+    max_places: int = 3
+    user_agent: str = (
+        "TravelPlannerAgent/1.0 "
+        "(https://github.com/mariusmaricean/ai-agent-travel-planner-iOS)"
+    )
+
+    @classmethod
+    def from_environment(cls) -> "OpenStreetMapPlacesProviderConfig":
+        try:
+            timeout_seconds = float(os.environ.get("OSM_TIMEOUT_SECONDS", "12"))
+        except ValueError:
+            timeout_seconds = 12
+
+        try:
+            max_places = int(os.environ.get("OSM_MAX_PLACES", "3"))
+        except ValueError:
+            max_places = 3
+
+        return cls(
+            search_url=os.environ.get(
+                "OSM_PLACES_SEARCH_URL",
+                "https://nominatim.openstreetmap.org/search",
+            ).strip()
+            or "https://nominatim.openstreetmap.org/search",
+            timeout_seconds=timeout_seconds,
+            max_places=max(1, min(max_places, 10)),
+            user_agent=os.environ.get(
+                "OSM_USER_AGENT",
+                (
+                    "TravelPlannerAgent/1.0 "
+                    "(https://github.com/mariusmaricean/ai-agent-travel-planner-iOS)"
+                ),
+            ).strip()
+            or (
+                "TravelPlannerAgent/1.0 "
+                "(https://github.com/mariusmaricean/ai-agent-travel-planner-iOS)"
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class OpenStreetMapPlacesProvider:
+    config: OpenStreetMapPlacesProviderConfig
+
+    @classmethod
+    def from_environment(cls) -> "OpenStreetMapPlacesProvider":
+        return cls(config=OpenStreetMapPlacesProviderConfig.from_environment())
+
+    def research(self, query: DestinationResearchQuery) -> DestinationResearch:
+        places = self.places(query)
+        if not places:
+            raise DestinationResearchProviderError(
+                f"OpenStreetMap returned no places for {query.destination}."
+            )
+
+        return osm_places_destination_research(query, places)
+
+    def places(self, query: DestinationResearchQuery) -> list[OpenStreetMapPlace]:
+        params = urllib.parse.urlencode(
+            {
+                "q": f"{query.mood} attractions in {query.destination}",
+                "format": "jsonv2",
+                "limit": self.config.max_places,
+                "addressdetails": 0,
+            }
+        )
+        request = urllib.request.Request(
+            url=f"{self.config.search_url}?{params}",
+            headers={
+                "Accept": "application/json",
+                "User-Agent": self.config.user_agent,
+            },
+            method="GET",
+        )
+
+        try:
+            payload = json_response(request, self.config.timeout_seconds, "OpenStreetMap places")
+        except FlightProviderError as error:
+            raise DestinationResearchProviderError(str(error)) from error
+
+        places = osm_places(payload)
+        log_provider_event(
+            "research.osm_places",
+            destination=query.destination,
+            place_count=len(places),
+            provider="openstreetmap",
+        )
+        return places[: self.config.max_places]
+
+
+@dataclass(frozen=True)
+class LocalTransportResearchProvider:
+    def research(self, query: DestinationResearchQuery) -> DestinationResearch:
+        return local_transport_destination_research(query)
+
+
+@dataclass(frozen=True)
+class BudgetResearchProvider:
+    def research(self, query: DestinationResearchQuery) -> DestinationResearch:
+        return budget_destination_research(query)
+
+
 def configured_destination_research_provider(
     query: DestinationResearchQuery,
 ) -> Optional[DestinationResearch]:
-    provider_name = os.environ.get("DESTINATION_RESEARCH_PROVIDER", "").strip().lower()
-    if provider_name in ("", "mock"):
+    provider_names = configured_destination_research_provider_names()
+    if not provider_names:
         return None
 
+    research_results: list[DestinationResearch] = []
+    for provider_name in provider_names:
+        provider_research = destination_research_from_provider(provider_name, query)
+        if provider_research is not None:
+            research_results.append(provider_research)
+
+    return merge_destination_research(query, research_results)
+
+
+def configured_destination_research_provider_names() -> list[str]:
+    configured = os.environ.get("DESTINATION_RESEARCH_PROVIDER", "").strip().lower()
+    if configured in ("", "mock"):
+        return []
+
+    names = [
+        name.strip()
+        for name in configured.replace(";", ",").split(",")
+        if name.strip()
+    ]
+    if names == ["all"]:
+        return ["open_meteo", "ticketmaster", "osm_places", "local_transport", "budget"]
+    if names == ["real"]:
+        return ["open_meteo", "ticketmaster", "osm_places"]
+
+    return names
+
+
+def destination_research_from_provider(
+    provider_name: str,
+    query: DestinationResearchQuery,
+) -> Optional[DestinationResearch]:
     if provider_name in ("open_meteo", "open-meteo", "weather"):
         try:
             return OpenMeteoDestinationResearchProvider.from_environment().research(query)
@@ -1041,14 +1185,31 @@ def configured_destination_research_provider(
             )
             return None
 
-    else:
-        log_provider_event(
-            "research.provider_failure",
-            provider=provider_name,
-            destination=query.destination,
-            error="unknown provider",
-        )
-        return None
+    if provider_name in ("osm", "osm_places", "openstreetmap", "places"):
+        try:
+            return OpenStreetMapPlacesProvider.from_environment().research(query)
+        except (DestinationResearchProviderError, ValueError) as error:
+            log_provider_event(
+                "research.provider_failure",
+                provider="openstreetmap",
+                destination=query.destination,
+                error=str(error),
+            )
+            return None
+
+    if provider_name in ("local_transport", "transport", "transit"):
+        return LocalTransportResearchProvider().research(query)
+
+    if provider_name in ("budget", "budget_estimate", "currency"):
+        return BudgetResearchProvider().research(query)
+
+    log_provider_event(
+        "research.provider_failure",
+        provider=provider_name,
+        destination=query.destination,
+        error="unknown provider",
+    )
+    return None
 
 
 def open_meteo_location(
@@ -1190,6 +1351,168 @@ def ticketmaster_event_summary(event: TicketmasterEvent) -> str:
     local_start = f" on {event.local_start}" if event.local_start else ""
     classification = f" ({event.classification})" if event.classification else ""
     return f"{event.name}{classification}{venue}{local_start}"
+
+
+def osm_places_destination_research(
+    query: DestinationResearchQuery,
+    places: list[OpenStreetMapPlace],
+) -> DestinationResearch:
+    memory_tip = query.memory[0].detail if query.memory else "No saved traveler preference yet."
+    return DestinationResearch(
+        destination=query.destination,
+        summary=(
+            f"{query.destination} research includes {len(places)} OpenStreetMap "
+            f"place option{'' if len(places) == 1 else 's'} for {query.mood.lower()} planning."
+        ),
+        highlights=[osm_place_summary(place) for place in places],
+        cautions=research_cautions(query)
+        + [
+            "Verify opening hours, accessibility, and booking needs before finalizing.",
+            "Treat map search results as candidates rather than guaranteed itinerary anchors.",
+        ],
+        local_tips=[
+            "Cluster nearby place candidates to reduce transit time between activities.",
+            f"Traveler context: {memory_tip}",
+        ],
+    )
+
+
+def local_transport_destination_research(query: DestinationResearchQuery) -> DestinationResearch:
+    duration = trip_duration_from_dates(query.depart_date, query.return_date)
+    return DestinationResearch(
+        destination=query.destination,
+        summary=(
+            f"{query.destination} transport research reserves local mobility buffers "
+            f"for a {duration}-day stay."
+        ),
+        highlights=[
+            "Plan activities by neighborhood clusters before choosing individual venues.",
+            "Keep first and last day transfers lighter than full sightseeing days.",
+            "Prefer walkable blocks plus public transit or rideshare backups for late returns.",
+        ],
+        cautions=[
+            "Check airport transfer duration before accepting tight arrival-day plans.",
+            "Avoid cross-city activity chains when the critic flags an overpacked day.",
+        ],
+        local_tips=[
+            "Save offline maps and the local transit app before departure.",
+            "Hold a backup ride budget for early departures, late events, or bad weather.",
+        ],
+    )
+
+
+def budget_destination_research(query: DestinationResearchQuery) -> DestinationResearch:
+    duration = max(1, trip_duration_from_dates(query.depart_date, query.return_date))
+    daily_budget = query.budget / duration
+    flexible_buffer = max(25, query.budget * 0.08)
+    return DestinationResearch(
+        destination=query.destination,
+        summary=(
+            f"{query.destination} budget research targets about ${daily_budget:,.0f} "
+            f"per trip day with a ${flexible_buffer:,.0f} flexibility buffer."
+        ),
+        highlights=[
+            f"Daily planning target: about ${daily_budget:,.0f} before surprise costs.",
+            f"Protected buffer: about ${flexible_buffer:,.0f} for transport, tickets, or weather pivots.",
+            "Favor one paid anchor per day and fill the rest with lower-cost neighborhood time.",
+        ],
+        cautions=[
+            "Recheck event tickets, baggage, seat fees, and airport transfers before booking.",
+            "Keep one optional activity per day removable if fare prices rise.",
+        ],
+        local_tips=[
+            "Use the budget target as a planning guardrail, not a final quote.",
+            "Mark premium activities as swappable until flights and lodging are confirmed.",
+        ],
+    )
+
+
+def merge_destination_research(
+    query: DestinationResearchQuery,
+    research_results: list[DestinationResearch],
+) -> Optional[DestinationResearch]:
+    if not research_results:
+        return None
+
+    if len(research_results) == 1:
+        return research_results[0]
+
+    summaries = [research.summary for research in research_results if research.summary]
+    return DestinationResearch(
+        destination=query.destination,
+        summary=(
+            f"{query.destination} research combines {len(research_results)} sources: "
+            f"{' '.join(summaries)}"
+        ),
+        highlights=unique_research_items(
+            item
+            for research in research_results
+            for item in research.highlights
+        )[:10],
+        cautions=unique_research_items(
+            item
+            for research in research_results
+            for item in research.cautions
+        )[:10],
+        local_tips=unique_research_items(
+            item
+            for research in research_results
+            for item in research.local_tips
+        )[:10],
+    )
+
+
+def unique_research_items(items: Any) -> list[str]:
+    unique_items: list[str] = []
+    normalized_items: set[str] = set()
+    for item in items:
+        if not isinstance(item, str):
+            continue
+
+        normalized = " ".join(item.lower().split())
+        if not normalized or normalized in normalized_items:
+            continue
+
+        normalized_items.add(normalized)
+        unique_items.append(item)
+
+    return unique_items
+
+
+def osm_places(payload: Any) -> list[OpenStreetMapPlace]:
+    if not isinstance(payload, list):
+        raise DestinationResearchProviderError(
+            "OpenStreetMap search response did not include a place array."
+        )
+
+    places: list[OpenStreetMapPlace] = []
+    for place_payload in payload:
+        if not isinstance(place_payload, dict):
+            continue
+
+        place = osm_place(place_payload)
+        if place is not None:
+            places.append(place)
+
+    return places
+
+
+def osm_place(payload: dict[str, Any]) -> Optional[OpenStreetMapPlace]:
+    display_name = payload.get("display_name")
+    if not isinstance(display_name, str) or not display_name:
+        return None
+
+    name = payload.get("name")
+    category = payload.get("type") or payload.get("category") or payload.get("class")
+    return OpenStreetMapPlace(
+        name=name if isinstance(name, str) and name else display_name.split(",")[0],
+        category=category if isinstance(category, str) and category else "place",
+        display_name=display_name,
+    )
+
+
+def osm_place_summary(place: OpenStreetMapPlace) -> str:
+    return f"{place.name} ({place.category}) - {place.display_name}"
 
 
 def ticketmaster_events(payload: dict[str, Any]) -> list[TicketmasterEvent]:
