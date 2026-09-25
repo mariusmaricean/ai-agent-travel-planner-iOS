@@ -1,6 +1,7 @@
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
@@ -155,21 +156,303 @@ def mock_flight_provider(query: FlightSearchQuery) -> list[FareOption]:
             name="Balanced Sprint",
             fare=base_fare + 70,
             score=94,
-            meta=f"{duration} days | morning outbound | 1 checked bag",
+            meta=f"{duration} days | morning outbound | 1 checked bag | source: mock",
         ),
         FareOption(
             name="Lowest Fare",
             fare=base_fare - 45,
             score=88,
-            meta=f"{duration} days | one connection | budget winner",
+            meta=f"{duration} days | one connection | budget winner | source: mock",
         ),
         FareOption(
             name="Comfort Pick",
             fare=base_fare + 180,
             score=91,
-            meta=f"{duration} days | direct flight | aisle-friendly timing",
+            meta=f"{duration} days | direct flight | aisle-friendly timing | source: mock",
         ),
     ]
+
+
+class FlightProviderError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class AmadeusFlightProviderConfig:
+    client_id: str
+    client_secret: str
+    base_url: str = "https://test.api.amadeus.com"
+    timeout_seconds: float = 20
+    currency_code: str = "USD"
+    max_offers: int = 3
+    adults: int = 1
+
+    @classmethod
+    def from_environment(cls) -> Optional["AmadeusFlightProviderConfig"]:
+        client_id = os.environ.get("AMADEUS_CLIENT_ID", "").strip()
+        client_secret = os.environ.get("AMADEUS_CLIENT_SECRET", "").strip()
+        if not client_id or not client_secret:
+            return None
+
+        return cls(
+            client_id=client_id,
+            client_secret=client_secret,
+            base_url=os.environ.get("AMADEUS_BASE_URL", "https://test.api.amadeus.com").strip()
+            or "https://test.api.amadeus.com",
+            timeout_seconds=float(os.environ.get("AMADEUS_TIMEOUT_SECONDS", "20")),
+            currency_code=os.environ.get("AMADEUS_CURRENCY_CODE", "USD").strip() or "USD",
+            max_offers=int(os.environ.get("AMADEUS_MAX_OFFERS", "3")),
+            adults=int(os.environ.get("AMADEUS_ADULTS", "1")),
+        )
+
+
+@dataclass(frozen=True)
+class AmadeusFlightProvider:
+    config: AmadeusFlightProviderConfig
+
+    @classmethod
+    def from_environment(cls) -> Optional["AmadeusFlightProvider"]:
+        config = AmadeusFlightProviderConfig.from_environment()
+        if config is None:
+            return None
+
+        return cls(config=config)
+
+    def search(self, query: FlightSearchQuery) -> list[FareOption]:
+        origin = iata_location_code(query.origin)
+        destination = iata_location_code(query.destination)
+        if origin is None or destination is None:
+            raise FlightProviderError("Amadeus searches require city or airport IATA codes.")
+
+        token = self.access_token()
+        payload = self.flight_offers(query, origin, destination, token)
+        fares = amadeus_fare_options(payload, self.config.currency_code)
+        if not fares:
+            raise FlightProviderError("Amadeus returned no flight offers.")
+
+        return fares
+
+    def access_token(self) -> str:
+        body = urllib.parse.urlencode(
+            {
+                "grant_type": "client_credentials",
+                "client_id": self.config.client_id,
+                "client_secret": self.config.client_secret,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            url=f"{self.config.base_url.rstrip('/')}/v1/security/oauth2/token",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        payload = json_response(request, self.config.timeout_seconds, "Amadeus token request")
+        token = payload.get("access_token")
+        if not isinstance(token, str) or not token:
+            raise FlightProviderError("Amadeus token response did not include an access token.")
+
+        return token
+
+    def flight_offers(
+        self,
+        query: FlightSearchQuery,
+        origin: str,
+        destination: str,
+        token: str,
+    ) -> dict[str, Any]:
+        params = urllib.parse.urlencode(
+            {
+                "originLocationCode": origin,
+                "destinationLocationCode": destination,
+                "departureDate": query.depart_date.date().isoformat(),
+                "returnDate": query.return_date.date().isoformat(),
+                "adults": self.config.adults,
+                "currencyCode": self.config.currency_code,
+                "max": self.config.max_offers,
+            }
+        )
+        request = urllib.request.Request(
+            url=f"{self.config.base_url.rstrip('/')}/v2/shopping/flight-offers?{params}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+            method="GET",
+        )
+        return json_response(request, self.config.timeout_seconds, "Amadeus flight offers request")
+
+
+def configured_flight_provider(query: FlightSearchQuery) -> list[FareOption]:
+    provider_name = os.environ.get("FLIGHT_PROVIDER", "").strip().lower()
+    if provider_name == "mock":
+        return mock_flight_provider(query)
+
+    provider = AmadeusFlightProvider.from_environment()
+
+    if provider is None:
+        return mock_flight_provider(query)
+
+    try:
+        return provider.search(query)
+    except FlightProviderError:
+        return mock_flight_provider(query)
+
+
+def json_response(
+    request: urllib.request.Request,
+    timeout_seconds: float,
+    context: str,
+) -> dict[str, Any]:
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        error_body = error.read().decode("utf-8", errors="replace")
+        raise FlightProviderError(
+            f"{context} failed with status {error.code}: {error_body}"
+        ) from error
+    except urllib.error.URLError as error:
+        raise FlightProviderError(f"{context} failed: {error.reason}") from error
+    except json.JSONDecodeError as error:
+        raise FlightProviderError(f"{context} returned invalid JSON.") from error
+
+    if not isinstance(payload, dict):
+        raise FlightProviderError(f"{context} did not return an object payload.")
+
+    return payload
+
+
+def amadeus_fare_options(payload: dict[str, Any], currency_code: str) -> list[FareOption]:
+    offers = payload.get("data", [])
+    if not isinstance(offers, list):
+        raise FlightProviderError("Amadeus flight offers response did not include a data array.")
+
+    fares: list[FareOption] = []
+    for index, offer in enumerate(offers):
+        if not isinstance(offer, dict):
+            continue
+
+        fare = amadeus_offer_price(offer)
+        if fare is None:
+            continue
+
+        fares.append(
+            FareOption(
+                name=f"Amadeus Offer {index + 1}",
+                fare=fare,
+                score=amadeus_offer_score(offer, index),
+                meta=amadeus_offer_meta(offer, currency_code),
+            )
+        )
+
+    return fares
+
+
+def amadeus_offer_price(offer: dict[str, Any]) -> Optional[float]:
+    price = offer.get("price", {})
+    if not isinstance(price, dict):
+        return None
+
+    total = price.get("grandTotal") or price.get("total")
+    try:
+        return float(total)
+    except (TypeError, ValueError):
+        return None
+
+
+def amadeus_offer_score(offer: dict[str, Any], index: int) -> int:
+    return max(70, 96 - (amadeus_connection_count(offer) * 4) - (index * 2))
+
+
+def amadeus_offer_meta(offer: dict[str, Any], currency_code: str) -> str:
+    carriers = amadeus_carrier_codes(offer)
+    carrier_detail = "/".join(carriers[:2]) if carriers else "carrier pending"
+    connection_count = amadeus_connection_count(offer)
+    connection_detail = "nonstop" if connection_count == 0 else f"{connection_count} connection"
+    if connection_count > 1:
+        connection_detail = f"{connection_count} connections"
+
+    return f"source: Amadeus | {carrier_detail} | {connection_detail} | {currency_code}"
+
+
+def amadeus_connection_count(offer: dict[str, Any]) -> int:
+    itineraries = offer.get("itineraries", [])
+    if not isinstance(itineraries, list) or not itineraries:
+        return 0
+
+    segment_count = 0
+    for itinerary in itineraries:
+        if not isinstance(itinerary, dict):
+            continue
+
+        segments = itinerary.get("segments", [])
+        if isinstance(segments, list):
+            segment_count += len(segments)
+
+    return max(0, segment_count - len(itineraries))
+
+
+def amadeus_carrier_codes(offer: dict[str, Any]) -> list[str]:
+    carriers: list[str] = []
+    itineraries = offer.get("itineraries", [])
+    if not isinstance(itineraries, list):
+        return carriers
+
+    for itinerary in itineraries:
+        if not isinstance(itinerary, dict):
+            continue
+
+        segments = itinerary.get("segments", [])
+        if not isinstance(segments, list):
+            continue
+
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+
+            carrier = segment.get("carrierCode")
+            if isinstance(carrier, str) and carrier not in carriers:
+                carriers.append(carrier)
+
+    return carriers
+
+
+def iata_location_code(value: str) -> Optional[str]:
+    stripped = value.strip().upper()
+    if len(stripped) == 3 and stripped.isalpha():
+        return stripped
+
+    return IATA_LOCATION_ALIASES.get(normalized_location_name(value))
+
+
+def normalized_location_name(value: str) -> str:
+    return " ".join(
+        value.lower()
+        .replace("-", " ")
+        .replace("_", " ")
+        .replace(",", " ")
+        .split()
+    )
+
+
+IATA_LOCATION_ALIASES = {
+    "austin": "AUS",
+    "bangkok": "BKK",
+    "boston": "BOS",
+    "chicago": "CHI",
+    "cluj": "CLJ",
+    "cluj napoca": "CLJ",
+    "copenhaga": "CPH",
+    "copenhagen": "CPH",
+    "lisbon": "LIS",
+    "london": "LON",
+    "mexico city": "MEX",
+    "new york": "NYC",
+    "paris": "PAR",
+    "seoul": "SEL",
+    "sydney": "SYD",
+    "tokyo": "TYO",
+}
 
 
 def mock_destination_researcher(query: DestinationResearchQuery) -> DestinationResearch:
@@ -687,7 +970,7 @@ def supports_reasoning(model: str) -> bool:
 
 
 default_tool_router = TravelPlanningToolRouter(
-    flight_provider=mock_flight_provider,
+    flight_provider=configured_flight_provider,
     itinerary_planner=model_backed_itinerary_planner,
     destination_researcher=model_backed_destination_researcher,
     itinerary_reviser=model_backed_itinerary_reviser,
