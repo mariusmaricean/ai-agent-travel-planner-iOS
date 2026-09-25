@@ -30,6 +30,8 @@ http://127.0.0.1:8000
 
 Use `POST /trip-plans/runs` when the client wants live progress. The response contains a `runId`, current `status`, emitted `events`, optional final `result`, and optional `error`. Poll `GET /trip-plans/runs/{runId}/events` until `status` is `completed` or `failed`.
 
+Run snapshots are persisted to disk so polling state survives store recreation and backend restarts. Any run that was still `running` during startup is marked `failed` with an interruption message because the in-process worker that owned it is gone.
+
 ## Agent Runtime
 
 The backend is the agent runtime for the iOS client. FastAPI receives `POST /trip-plans`; `TripCoordinatorAgent` then runs a bounded agent workflow while SwiftUI stays focused on presentation.
@@ -54,7 +56,7 @@ Responsibilities:
 - Quality control: `ItineraryCriticAgent`, kept deterministic for fast guardrail checks.
 - Revision: a rejected itinerary is sent back through a dedicated reviser that makes concrete day-plan changes; with OpenAI enabled this is a structured model call, otherwise a deterministic fallback is used.
 - Coordination and memory: `TripCoordinatorAgent`.
-- Progress events: `TripPlanRunStore` captures coordinator events for iOS polling.
+- Progress events: `TripPlanRunStore` persists coordinator events for iOS polling, while `TripPlanJobRunner` runs planning work outside the request/response lifecycle.
 
 The coordinator intentionally allows only one revision pass so request latency and model cost remain bounded. The revised result is critiqued once more before it is returned.
 
@@ -88,6 +90,8 @@ Optional environment variables:
 - `OPENAI_BASE_URL`: defaults to `https://api.openai.com/v1`.
 - `OPENAI_TIMEOUT_SECONDS`: defaults to `30`.
 - `OPENAI_REASONING_EFFORT`: defaults to `low`.
+- `TRIP_PLAN_RUN_STORE_PATH`: defaults to `Backend/.data/trip_plan_runs.json`; relative paths are resolved from the `Backend` directory.
+- `TRIP_PLAN_RUN_WORKERS`: defaults to `2`.
 
 ## Destination Research Provider
 
@@ -126,4 +130,4 @@ Provider decisions are logged through the `travel_planner.providers` logger as `
 
 - Add places or events providers to destination research.
 - Surface provider telemetry in live run events or a monitoring dashboard.
-- Move long-running work into a job or workflow if provider calls become slow.
+- Move persisted run execution to an external queue or workflow worker before multi-instance deployment.

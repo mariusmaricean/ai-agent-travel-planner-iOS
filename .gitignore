@@ -23,6 +23,7 @@ Build/
 **/.venv/
 __pycache__/
 *.py[cod]
+Backend/.data/
 
 # Local secrets
 .env
