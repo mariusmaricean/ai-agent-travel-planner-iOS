@@ -32,10 +32,15 @@ from app.tools import (
     OpenAIItineraryPlanner,
     OpenAIItineraryReviser,
     OpenAIPlannerConfig,
+    ResolvedLocation,
     TravelPlanningToolRouter,
     amadeus_fare_options,
+    amadeus_location_keyword,
+    amadeus_resolved_location,
     configured_flight_provider,
+    configured_location_resolver,
     iata_location_code,
+    local_resolved_location,
     model_backed_destination_researcher,
     model_backed_itinerary_planner,
     rule_based_itinerary_reviser,
@@ -359,6 +364,102 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(iata_location_code("Cluj-Napoca"), "CLJ")
         self.assertEqual(iata_location_code("LIS"), "LIS")
         self.assertIsNone(iata_location_code("Unknown Place"))
+
+    def test_local_location_resolver_returns_alias_metadata(self) -> None:
+        location = local_resolved_location("Copenhaga")
+
+        self.assertEqual(
+            location,
+            ResolvedLocation(
+                query="Copenhaga",
+                code="CPH",
+                name="Copenhaga",
+                source="local alias",
+            ),
+        )
+
+    def test_configured_location_resolver_uses_local_alias_without_credentials(self) -> None:
+        location = configured_location_resolver("Cluj-Napoca")
+
+        self.assertIsNotNone(location)
+        assert location is not None
+        self.assertEqual(location.code, "CLJ")
+        self.assertEqual(location.source, "local alias")
+
+    def test_tool_router_resolves_locations_before_flight_search(self) -> None:
+        observed_queries: list[FlightSearchQuery] = []
+        request = TripPlanRequest(
+            origin="Copenhaga",
+            destination="Cluj-Napoca",
+            departDate=datetime(2026, 7, 11, 9, tzinfo=timezone.utc),
+            returnDate=datetime(2026, 7, 16, 9, tzinfo=timezone.utc),
+            budget=600,
+            constraints="Window seat, no red-eye flights.",
+            rememberPreferences=True,
+            mood="Culture",
+            memory=[],
+        )
+
+        def location_resolver(value: str) -> Optional[ResolvedLocation]:
+            codes = {
+                "Copenhaga": "CPH",
+                "Cluj-Napoca": "CLJ",
+            }
+            code = codes.get(value)
+            if code is None:
+                return None
+
+            return ResolvedLocation(
+                query=value,
+                code=code,
+                name=value,
+                source="test",
+            )
+
+        tools = TravelPlanningToolRouter(
+            flight_provider=lambda query: observed_queries.append(query) or [],
+            itinerary_planner=lambda planning_input: [],
+            location_resolver=location_resolver,
+        )
+
+        tools.search_flights(request)
+
+        self.assertEqual(observed_queries[0].origin, "CPH")
+        self.assertEqual(observed_queries[0].destination, "CLJ")
+
+    def test_amadeus_location_keyword_uses_first_significant_word(self) -> None:
+        self.assertEqual(amadeus_location_keyword("San Francisco"), "SAN")
+        self.assertEqual(amadeus_location_keyword("Cluj-Napoca"), "CLUJ")
+        self.assertEqual(amadeus_location_keyword("Copenhaga"), "COPENHAGA")
+        self.assertIsNone(amadeus_location_keyword("A"))
+
+    def test_amadeus_resolved_location_parse_location_response(self) -> None:
+        location = amadeus_resolved_location(
+            {
+                "data": [
+                    {
+                        "name": "COPENHAGEN",
+                        "iataCode": "cph",
+                        "subType": "CITY",
+                    }
+                ]
+            },
+            "Copenhaga",
+        )
+
+        self.assertEqual(
+            location,
+            ResolvedLocation(
+                query="Copenhaga",
+                code="CPH",
+                name="COPENHAGEN",
+                source="Amadeus Location Search",
+            ),
+        )
+
+    def test_amadeus_resolved_location_rejects_malformed_payload(self) -> None:
+        with self.assertRaises(FlightProviderError):
+            amadeus_resolved_location({"data": {}}, "Copenhaga")
 
     def test_amadeus_config_reads_environment(self) -> None:
         os.environ["AMADEUS_CLIENT_ID"] = "client"

@@ -48,7 +48,7 @@ TripCoordinatorAgent
 
 Responsibilities:
 
-- Flight search: `TravelPlanningToolRouter`, using Amadeus Flight Offers when configured and the deterministic mock provider otherwise.
+- Flight search: `TravelPlanningToolRouter`, using Amadeus Location Search and Flight Offers when configured and the deterministic mock provider otherwise.
 - Destination research: `DestinationResearchAgent`, using a model-backed research tool when `OPENAI_API_KEY` is configured and a deterministic fallback otherwise.
 - Itinerary planning: `ItineraryAgent`, backed by the existing rule-based or OpenAI planner.
 - Quality control: `ItineraryCriticAgent`, kept deterministic for fast guardrail checks.
@@ -103,9 +103,9 @@ AMADEUS_MAX_OFFERS=3
 AMADEUS_ADULTS=1
 ```
 
-The provider accepts three-letter IATA city or airport codes directly. A small local alias table also maps common demo city names such as New York, Lisbon, Copenhagen, and Cluj-Napoca to IATA codes.
+The provider accepts three-letter IATA city or airport codes directly. It resolves city names through Amadeus Airport & City Search when Amadeus credentials are configured, with a small local alias table for common demo names such as New York, Lisbon, Copenhagen, and Cluj-Napoca.
 
 ## Next Integration Points
 
-- Expand the IATA lookup from a small alias table to a real locations API.
+- Cache resolved locations so repeated searches avoid extra provider calls.
 - Move long-running work into a job or workflow if provider calls become slow.
