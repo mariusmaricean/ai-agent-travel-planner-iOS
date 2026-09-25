@@ -49,7 +49,7 @@ TripCoordinatorAgent
 Responsibilities:
 
 - Flight search: `TravelPlanningToolRouter`, using Amadeus Location Search and Flight Offers when configured and the deterministic mock provider otherwise.
-- Destination research: `DestinationResearchAgent`, using a model-backed research tool when `OPENAI_API_KEY` is configured and a deterministic fallback otherwise.
+- Destination research: `DestinationResearchAgent`, using optional Open-Meteo weather research, a model-backed research tool when `OPENAI_API_KEY` is configured, and a deterministic fallback otherwise.
 - Itinerary planning: `ItineraryAgent`, backed by the existing rule-based or OpenAI planner.
 - Quality control: `ItineraryCriticAgent`, kept deterministic for fast guardrail checks.
 - Revision: a rejected itinerary is sent back through a dedicated reviser that makes concrete day-plan changes; with OpenAI enabled this is a structured model call, otherwise a deterministic fallback is used.
@@ -89,6 +89,19 @@ Optional environment variables:
 - `OPENAI_TIMEOUT_SECONDS`: defaults to `30`.
 - `OPENAI_REASONING_EFFORT`: defaults to `low`.
 
+## Destination Research Provider
+
+Set `DESTINATION_RESEARCH_PROVIDER=open_meteo` to add real destination weather context from Open-Meteo before itinerary planning. The provider geocodes the destination, fetches a short daily forecast, and turns that into highlights, cautions, and local tips. If the provider is disabled or fails, the backend falls back to model-backed or deterministic research.
+
+```text
+DESTINATION_RESEARCH_PROVIDER=open_meteo
+OPEN_METEO_GEOCODING_URL=https://geocoding-api.open-meteo.com/v1/search
+OPEN_METEO_FORECAST_URL=https://api.open-meteo.com/v1/forecast
+OPEN_METEO_TIMEOUT_SECONDS=12
+```
+
+When OpenAI is also enabled, the Open-Meteo result is passed into the destination research prompt as provider context.
+
 ## Flight Provider
 
 The backend can call Amadeus Self-Service Flight Offers Search when credentials are configured. Without credentials, or when `FLIGHT_PROVIDER=mock`, it keeps using the local mock fare provider.
@@ -111,5 +124,6 @@ Provider decisions are logged through the `travel_planner.providers` logger as `
 
 ## Next Integration Points
 
+- Add places or events providers to destination research.
 - Surface provider telemetry in live run events or a monitoring dashboard.
 - Move long-running work into a job or workflow if provider calls become slow.

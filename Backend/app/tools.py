@@ -5,7 +5,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from threading import RLock
 from typing import Any, Callable, Optional
@@ -49,6 +49,26 @@ class ResolvedLocation:
 
 
 @dataclass(frozen=True)
+class OpenMeteoLocation:
+    query: str
+    name: str
+    country: str
+    latitude: float
+    longitude: float
+    timezone: str
+
+
+@dataclass(frozen=True)
+class WeatherResearchSummary:
+    location: OpenMeteoLocation
+    forecast_days: int
+    min_temperature_c: float
+    max_temperature_c: float
+    precipitation_probability_max: Optional[float]
+    weather_code: Optional[int]
+
+
+@dataclass(frozen=True)
 class DestinationResearchQuery:
     origin: str
     destination: str
@@ -58,6 +78,7 @@ class DestinationResearchQuery:
     mood: str
     constraints: str
     memory: list[MemoryNote]
+    provider_research: Optional[DestinationResearch] = None
 
 
 @dataclass(frozen=True)
@@ -755,6 +776,347 @@ IATA_LOCATION_ALIASES = {
 }
 
 
+class DestinationResearchProviderError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class OpenMeteoDestinationResearchProviderConfig:
+    geocoding_url: str = "https://geocoding-api.open-meteo.com/v1/search"
+    forecast_url: str = "https://api.open-meteo.com/v1/forecast"
+    timeout_seconds: float = 12
+
+    @classmethod
+    def from_environment(cls) -> "OpenMeteoDestinationResearchProviderConfig":
+        return cls(
+            geocoding_url=os.environ.get(
+                "OPEN_METEO_GEOCODING_URL",
+                "https://geocoding-api.open-meteo.com/v1/search",
+            ).strip()
+            or "https://geocoding-api.open-meteo.com/v1/search",
+            forecast_url=os.environ.get(
+                "OPEN_METEO_FORECAST_URL",
+                "https://api.open-meteo.com/v1/forecast",
+            ).strip()
+            or "https://api.open-meteo.com/v1/forecast",
+            timeout_seconds=float(os.environ.get("OPEN_METEO_TIMEOUT_SECONDS", "12")),
+        )
+
+
+@dataclass(frozen=True)
+class OpenMeteoDestinationResearchProvider:
+    config: OpenMeteoDestinationResearchProviderConfig
+
+    @classmethod
+    def from_environment(cls) -> "OpenMeteoDestinationResearchProvider":
+        return cls(config=OpenMeteoDestinationResearchProviderConfig.from_environment())
+
+    def research(self, query: DestinationResearchQuery) -> DestinationResearch:
+        location = self.location(query.destination)
+        weather = self.weather_summary(query, location)
+        return weather_destination_research(query, weather)
+
+    def location(self, destination: str) -> OpenMeteoLocation:
+        params = urllib.parse.urlencode(
+            {
+                "name": destination,
+                "count": 1,
+                "language": "en",
+                "format": "json",
+            }
+        )
+        request = urllib.request.Request(
+            url=f"{self.config.geocoding_url}?{params}",
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+
+        try:
+            payload = json_response(request, self.config.timeout_seconds, "Open-Meteo geocoding")
+        except FlightProviderError as error:
+            raise DestinationResearchProviderError(str(error)) from error
+
+        location = open_meteo_location(payload, destination)
+        if location is None:
+            raise DestinationResearchProviderError(
+                f"Open-Meteo returned no location for {destination}."
+            )
+
+        log_provider_event(
+            "research.open_meteo_geocode",
+            country=location.country,
+            destination=destination,
+            name=location.name,
+        )
+        return location
+
+    def weather_summary(
+        self,
+        query: DestinationResearchQuery,
+        location: OpenMeteoLocation,
+    ) -> WeatherResearchSummary:
+        forecast_days = min(
+            16,
+            max(1, trip_duration_from_dates(query.depart_date, query.return_date)),
+        )
+        params = urllib.parse.urlencode(
+            {
+                "latitude": location.latitude,
+                "longitude": location.longitude,
+                "daily": ",".join(
+                    [
+                        "weather_code",
+                        "temperature_2m_max",
+                        "temperature_2m_min",
+                        "precipitation_probability_max",
+                    ]
+                ),
+                "timezone": location.timezone or "auto",
+                "forecast_days": forecast_days,
+            }
+        )
+        request = urllib.request.Request(
+            url=f"{self.config.forecast_url}?{params}",
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+
+        try:
+            payload = json_response(request, self.config.timeout_seconds, "Open-Meteo forecast")
+        except FlightProviderError as error:
+            raise DestinationResearchProviderError(str(error)) from error
+
+        summary = open_meteo_weather_summary(payload, location, forecast_days)
+        log_provider_event(
+            "research.open_meteo_forecast",
+            destination=query.destination,
+            forecast_days=summary.forecast_days,
+            precipitation_probability_max=summary.precipitation_probability_max,
+            temperature_max_c=summary.max_temperature_c,
+            temperature_min_c=summary.min_temperature_c,
+        )
+        return summary
+
+
+def configured_destination_research_provider(
+    query: DestinationResearchQuery,
+) -> Optional[DestinationResearch]:
+    provider_name = os.environ.get("DESTINATION_RESEARCH_PROVIDER", "").strip().lower()
+    if provider_name in ("", "mock"):
+        return None
+
+    if provider_name not in ("open_meteo", "open-meteo", "weather"):
+        log_provider_event(
+            "research.provider_failure",
+            provider=provider_name,
+            destination=query.destination,
+            error="unknown provider",
+        )
+        return None
+
+    try:
+        return OpenMeteoDestinationResearchProvider.from_environment().research(query)
+    except (DestinationResearchProviderError, ValueError) as error:
+        log_provider_event(
+            "research.provider_failure",
+            provider="open_meteo",
+            destination=query.destination,
+            error=str(error),
+        )
+        return None
+
+
+def open_meteo_location(
+    payload: dict[str, Any],
+    query: str,
+) -> Optional[OpenMeteoLocation]:
+    results = payload.get("results", [])
+    if not isinstance(results, list):
+        raise DestinationResearchProviderError(
+            "Open-Meteo geocoding response did not include a results array."
+        )
+
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+
+        latitude = result.get("latitude")
+        longitude = result.get("longitude")
+        name = result.get("name")
+        if not isinstance(latitude, (float, int)) or not isinstance(longitude, (float, int)):
+            continue
+        if not isinstance(name, str) or not name:
+            continue
+
+        country = result.get("country")
+        timezone = result.get("timezone")
+        return OpenMeteoLocation(
+            query=query,
+            name=name,
+            country=country if isinstance(country, str) and country else "",
+            latitude=float(latitude),
+            longitude=float(longitude),
+            timezone=timezone if isinstance(timezone, str) and timezone else "auto",
+        )
+
+    return None
+
+
+def open_meteo_weather_summary(
+    payload: dict[str, Any],
+    location: OpenMeteoLocation,
+    forecast_days: int,
+) -> WeatherResearchSummary:
+    daily = payload.get("daily", {})
+    if not isinstance(daily, dict):
+        raise DestinationResearchProviderError(
+            "Open-Meteo forecast response did not include a daily object."
+        )
+
+    max_temperatures = numeric_values(daily.get("temperature_2m_max"))
+    min_temperatures = numeric_values(daily.get("temperature_2m_min"))
+    if not max_temperatures or not min_temperatures:
+        raise DestinationResearchProviderError(
+            "Open-Meteo forecast response did not include daily temperatures."
+        )
+
+    precipitation_probabilities = numeric_values(daily.get("precipitation_probability_max"))
+    weather_code = first_int_value(daily.get("weather_code"))
+    return WeatherResearchSummary(
+        location=location,
+        forecast_days=forecast_days,
+        min_temperature_c=min(min_temperatures),
+        max_temperature_c=max(max_temperatures),
+        precipitation_probability_max=max(precipitation_probabilities)
+        if precipitation_probabilities
+        else None,
+        weather_code=weather_code,
+    )
+
+
+def weather_destination_research(
+    query: DestinationResearchQuery,
+    weather: WeatherResearchSummary,
+) -> DestinationResearch:
+    focus = focus_items(query.mood)
+    condition = weather_code_label(weather.weather_code)
+    temperature_range = (
+        f"{round(weather.min_temperature_c)}-{round(weather.max_temperature_c)} C"
+    )
+    precipitation = weather.precipitation_probability_max
+    precipitation_note = (
+        f"up to {round(precipitation)}% precipitation probability"
+        if precipitation is not None
+        else "precipitation probability unavailable"
+    )
+    memory_tip = query.memory[0].detail if query.memory else "No saved traveler preference yet."
+
+    return DestinationResearch(
+        destination=query.destination,
+        summary=(
+            f"{query.destination} research uses an Open-Meteo {weather.forecast_days}-day "
+            f"weather snapshot for {weather.location.name}: {condition}, "
+            f"{temperature_range}, {precipitation_note}."
+        ),
+        highlights=[
+            f"{query.destination} {focus[0]}",
+            f"{query.destination} {focus[1]}",
+            f"Weather-aware {focus[2]} around {condition.lower()} conditions",
+        ],
+        cautions=research_cautions(query) + weather_cautions(weather),
+        local_tips=[
+            (
+                f"Open-Meteo snapshot: {condition}, {temperature_range}, "
+                f"{precipitation_note}."
+            ),
+            "Treat weather as near-term planning context and recheck close to departure.",
+            f"Traveler context: {memory_tip}",
+        ],
+    )
+
+
+def weather_cautions(weather: WeatherResearchSummary) -> list[str]:
+    cautions = [
+        "Keep one flexible indoor/outdoor swap because forecasts can change.",
+    ]
+    precipitation = weather.precipitation_probability_max
+    if precipitation is not None and precipitation >= 50:
+        cautions.append("Build indoor alternates for high-rain windows.")
+
+    if weather.max_temperature_c >= 30:
+        cautions.append("Plan shade, hydration, and slower outdoor pacing.")
+
+    if weather.min_temperature_c <= 0:
+        cautions.append("Protect outdoor plans with cold-weather buffers.")
+
+    return cautions
+
+
+def numeric_values(value: Any) -> list[float]:
+    if not isinstance(value, list):
+        return []
+
+    values: list[float] = []
+    for item in value:
+        if isinstance(item, (float, int)):
+            values.append(float(item))
+
+    return values
+
+
+def first_int_value(value: Any) -> Optional[int]:
+    if not isinstance(value, list):
+        return None
+
+    for item in value:
+        if isinstance(item, int):
+            return item
+        if isinstance(item, float):
+            return int(item)
+
+    return None
+
+
+def weather_code_label(code: Optional[int]) -> str:
+    if code is None:
+        return "weather pattern unavailable"
+
+    return WEATHER_CODE_LABELS.get(code, f"weather code {code}")
+
+
+WEATHER_CODE_LABELS = {
+    0: "Clear sky",
+    1: "Mainly clear",
+    2: "Partly cloudy",
+    3: "Overcast",
+    45: "Fog",
+    48: "Depositing rime fog",
+    51: "Light drizzle",
+    53: "Moderate drizzle",
+    55: "Dense drizzle",
+    56: "Light freezing drizzle",
+    57: "Dense freezing drizzle",
+    61: "Slight rain",
+    63: "Moderate rain",
+    65: "Heavy rain",
+    66: "Light freezing rain",
+    67: "Heavy freezing rain",
+    71: "Slight snowfall",
+    73: "Moderate snowfall",
+    75: "Heavy snowfall",
+    77: "Snow grains",
+    80: "Slight rain showers",
+    81: "Moderate rain showers",
+    82: "Violent rain showers",
+    85: "Slight snow showers",
+    86: "Heavy snow showers",
+    95: "Thunderstorm",
+    96: "Thunderstorm with slight hail",
+    97: "Heavy thunderstorm",
+    99: "Thunderstorm with heavy hail",
+}
+
+
 def mock_destination_researcher(query: DestinationResearchQuery) -> DestinationResearch:
     focus = focus_items(query.mood)
     memory_tip = query.memory[0].detail if query.memory else "No saved traveler preference yet."
@@ -994,11 +1356,20 @@ def structured_response_body(
 
 
 def model_backed_destination_researcher(query: DestinationResearchQuery) -> DestinationResearch:
+    provider_research = configured_destination_research_provider(query)
+    enriched_query = (
+        replace(query, provider_research=provider_research)
+        if provider_research is not None
+        else query
+    )
     researcher = OpenAIDestinationResearcher.from_environment()
     if researcher is None:
-        return mock_destination_researcher(query)
+        return provider_research or mock_destination_researcher(query)
 
-    return researcher.research(query)
+    try:
+        return researcher.research(enriched_query)
+    except OpenAIPlannerError:
+        return provider_research or mock_destination_researcher(query)
 
 
 def model_backed_itinerary_planner(planning_input: ItineraryPlanningInput) -> list[TripOption]:
@@ -1036,6 +1407,7 @@ def destination_research_prompt_payload(query: DestinationResearchQuery) -> dict
             }
             for note in query.memory
         ],
+        "providerResearch": destination_research_payload(query.provider_research),
         "successCriteria": [
             "Return concise research context for itinerary planning.",
             "Prefer experience types over unverifiable live details.",
