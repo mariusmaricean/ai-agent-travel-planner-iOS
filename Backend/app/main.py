@@ -1,9 +1,12 @@
+import json
 import logging
+from time import perf_counter
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 
+from app.config import backend_configuration_status
 from app.history import TripPlanHistoryStore
 from app.jobs import TripPlanJobRunner, durable_job_queue_enabled
 from app.planner import create_trip_plan
@@ -17,6 +20,7 @@ from app.schemas import (
 )
 
 LOGGER = logging.getLogger(__name__)
+API_LOGGER = logging.getLogger("travel_planner.api")
 
 history_store = TripPlanHistoryStore.from_environment()
 run_store = TripPlanRunStore.from_environment(
@@ -36,9 +40,48 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Travel Planner Agent API", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def log_api_request(request: Request, call_next):
+    started_at = perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        API_LOGGER.exception(
+            "api_request_failed %s",
+            json.dumps(
+                {
+                    "method": request.method,
+                    "path": request.url.path,
+                },
+                sort_keys=True,
+            ),
+        )
+        raise
+
+    duration_ms = round((perf_counter() - started_at) * 1000, 2)
+    API_LOGGER.info(
+        "api_request %s",
+        json.dumps(
+            {
+                "durationMs": duration_ms,
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+            },
+            sort_keys=True,
+        ),
+    )
+    return response
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/config/status")
+async def config_status() -> dict[str, Any]:
+    return backend_configuration_status()
 
 
 @app.post("/trip-plans", response_model=TripPlanResponse)

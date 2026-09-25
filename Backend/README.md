@@ -21,6 +21,7 @@ http://127.0.0.1:8000
 ## Endpoints
 
 - `GET /health`
+- `GET /config/status`
 - `POST /trip-plans`
 - `GET /trip-plans/history`
 - `GET /trip-plans/history/{planId}`
@@ -29,7 +30,9 @@ http://127.0.0.1:8000
 - `GET /trip-plans/runs/{runId}`
 - `GET /trip-plans/runs/{runId}/events`
 
-`POST /trip-plans` matches the contract documented in the root `README.md`.
+`POST /trip-plans` matches the contract documented in the root `README.md`. Requests are validated for basic production safety: non-empty origin/destination/mood, positive budget capped at `100000`, return date after depart date, trip windows up to 30 days, bounded constraint text, and up to 20 memory notes.
+
+Use `GET /config/status` to inspect non-secret backend configuration health. It reports enabled providers and warnings such as missing provider credentials or invalid numeric environment values.
 
 Use `POST /trip-plans/runs` when the client wants live progress. The response contains a `runId`, current `status`, emitted `events`, optional final `result`, and optional `error`. Poll `GET /trip-plans/runs/{runId}/events` until `status` is `completed` or `failed`.
 
@@ -102,6 +105,8 @@ Optional environment variables:
 - `TRIP_PLAN_JOB_QUEUE_PATH`: defaults to `Backend/.data/trip_plan_jobs.json`; relative paths are resolved from the `Backend` directory.
 - `TRIP_PLAN_HISTORY_STORE_PATH`: defaults to `Backend/.data/trip_plan_history.json`; relative paths are resolved from the `Backend` directory.
 - `TRIP_PLAN_HISTORY_LIMIT`: defaults to `100`.
+
+API requests are logged as structured `travel_planner.api` records with method, path, status, and duration. Provider decisions continue to use the `travel_planner.providers` logger.
 
 ## Destination Research Provider
 
