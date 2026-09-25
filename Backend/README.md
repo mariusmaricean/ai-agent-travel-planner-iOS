@@ -22,6 +22,9 @@ http://127.0.0.1:8000
 
 - `GET /health`
 - `POST /trip-plans`
+- `GET /trip-plans/history`
+- `GET /trip-plans/history/{planId}`
+- `GET /memory/latest`
 - `POST /trip-plans/runs`
 - `GET /trip-plans/runs/{runId}`
 - `GET /trip-plans/runs/{runId}/events`
@@ -31,6 +34,8 @@ http://127.0.0.1:8000
 Use `POST /trip-plans/runs` when the client wants live progress. The response contains a `runId`, current `status`, emitted `events`, optional final `result`, and optional `error`. Poll `GET /trip-plans/runs/{runId}/events` until `status` is `completed` or `failed`.
 
 Run snapshots are persisted to disk so polling state survives store recreation and backend restarts. Any run that was still `running` during startup is marked `failed` with an interruption message because the in-process worker that owned it is gone.
+
+Completed trip plans are also persisted to disk. Use `GET /trip-plans/history` to list saved plans, `GET /trip-plans/history/{planId}` to fetch one saved response, and `GET /memory/latest` to hydrate the client with the most recent traveler memory.
 
 ## Agent Runtime
 
@@ -57,6 +62,7 @@ Responsibilities:
 - Revision: a rejected itinerary is sent back through a dedicated reviser that makes concrete day-plan changes; with OpenAI enabled this is a structured model call, otherwise a deterministic fallback is used.
 - Coordination and memory: `TripCoordinatorAgent`.
 - Progress events: `TripPlanRunStore` persists coordinator events for iOS polling, while `TripPlanJobRunner` runs planning work outside the request/response lifecycle.
+- History and memory persistence: `TripPlanHistoryStore` saves completed direct plans and completed live-run plans for later retrieval.
 
 The coordinator intentionally allows only one revision pass so request latency and model cost remain bounded. The revised result is critiqued once more before it is returned.
 
@@ -92,6 +98,8 @@ Optional environment variables:
 - `OPENAI_REASONING_EFFORT`: defaults to `low`.
 - `TRIP_PLAN_RUN_STORE_PATH`: defaults to `Backend/.data/trip_plan_runs.json`; relative paths are resolved from the `Backend` directory.
 - `TRIP_PLAN_RUN_WORKERS`: defaults to `2`.
+- `TRIP_PLAN_HISTORY_STORE_PATH`: defaults to `Backend/.data/trip_plan_history.json`; relative paths are resolved from the `Backend` directory.
+- `TRIP_PLAN_HISTORY_LIMIT`: defaults to `100`.
 
 ## Destination Research Provider
 
@@ -129,5 +137,6 @@ Provider decisions are logged through the `travel_planner.providers` logger as `
 ## Next Integration Points
 
 - Add places or events providers to destination research.
+- Scope saved trip history and memory by authenticated user before production.
 - Surface provider telemetry in live run events or a monitoring dashboard.
 - Move persisted run execution to an external queue or workflow worker before multi-instance deployment.

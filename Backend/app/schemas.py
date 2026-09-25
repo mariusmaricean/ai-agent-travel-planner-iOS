@@ -49,6 +49,14 @@ class TripPlanResponse(BaseModel):
     memory: Optional[list[MemoryNote]] = None
 
 
+class SavedTripPlan(BaseModel):
+    id: str
+    request: TripPlanRequest
+    response: TripPlanResponse
+    createdAt: datetime
+    runId: Optional[str] = None
+
+
 class AgentRunEvent(BaseModel):
     id: int
     step: str

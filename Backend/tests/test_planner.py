@@ -13,6 +13,7 @@ from app.agents import (
     ItineraryCriticAgent,
     TripCoordinatorAgent,
 )
+from app.history import TripPlanHistoryStore
 from app.jobs import TripPlanJobRunner
 from app.planner import create_trip_plan
 from app.runs import INTERRUPTED_RUN_MESSAGE, TripPlanRunStore
@@ -82,6 +83,8 @@ class TripPlannerTests(unittest.TestCase):
                 "OPEN_METEO_GEOCODING_URL",
                 "OPEN_METEO_FORECAST_URL",
                 "OPEN_METEO_TIMEOUT_SECONDS",
+                "TRIP_PLAN_HISTORY_LIMIT",
+                "TRIP_PLAN_HISTORY_STORE_PATH",
                 "TRIP_PLAN_RUN_STORE_PATH",
                 "TRIP_PLAN_RUN_WORKERS",
             ]
@@ -361,9 +364,48 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(restored.events[-1].status, "failed")
         self.assertEqual(restored.events[-1].step, "research")
 
+    def test_file_backed_history_store_restores_saved_plan_and_memory(self) -> None:
+        request = make_request()
+        response = TripPlanResponse(
+            trips=[],
+            memory=[MemoryNote(title="Preference", detail="Likes culture walks.")],
+        )
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "history.json"
+            store = TripPlanHistoryStore(path=path)
+
+            saved = store.save(request, response, run_id="run-1")
+            restored_store = TripPlanHistoryStore(path=path)
+            restored = restored_store.get(saved.id)
+            latest_memory = restored_store.latest_memory()
+
+        self.assertIsNotNone(restored)
+        assert restored is not None
+        self.assertEqual(restored.runId, "run-1")
+        self.assertEqual(restored.request.destination, "Lisbon")
+        self.assertEqual(restored.response, response)
+        self.assertEqual(latest_memory, response.memory)
+
+    def test_history_store_limits_saved_records(self) -> None:
+        request = make_request()
+        response = TripPlanResponse(trips=[], memory=[])
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "history.json"
+            store = TripPlanHistoryStore(path=path, max_entries=1)
+
+            first = store.save(request, response)
+            second = store.save(request, response)
+            restored_store = TripPlanHistoryStore(path=path, max_entries=1)
+
+        self.assertIsNone(restored_store.get(first.id))
+        self.assertEqual(restored_store.recent()[0].id, second.id)
+
     def test_trip_plan_job_runner_completes_run_snapshot(self) -> None:
         store = TripPlanRunStore()
-        runner = TripPlanJobRunner(store=store, max_workers=1)
+        history_store = TripPlanHistoryStore()
+        runner = TripPlanJobRunner(store=store, history_store=history_store, max_workers=1)
         created = store.create()
 
         try:
@@ -380,6 +422,8 @@ class TripPlannerTests(unittest.TestCase):
         self.assertIsNotNone(snapshot.result)
         self.assertEqual(snapshot.events[0].step, "research")
         self.assertEqual(snapshot.events[-1].step, "memory")
+        self.assertEqual(len(history_store.recent()), 1)
+        self.assertEqual(history_store.recent()[0].runId, created.runId)
 
     def test_rule_based_revision_rewrites_overpacked_day(self) -> None:
         request = make_request()

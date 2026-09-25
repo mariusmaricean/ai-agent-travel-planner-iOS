@@ -78,6 +78,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - Set `TRAVEL_PLANNER_API_BASE_URL` to use the live backend instead of the local mock planner.
 - Use `POST /trip-plans/runs` and `GET /trip-plans/runs/{runId}/events` to render live agent progress in the iOS timeline.
 - Persisted backend run snapshots let iOS keep polling after slow provider calls or backend store recreation.
+- Load `GET /trip-plans/history` and `GET /memory/latest` to restore saved trips and traveler memory from the backend.
 - Configure `FLIGHT_PROVIDER=amadeus` plus Amadeus credentials to resolve and cache city names, then use real flight offers; without credentials the backend uses the mock provider.
 - Set `DESTINATION_RESEARCH_PROVIDER=open_meteo` to enrich destination research with weather context.
 - Watch the backend `travel_planner.providers` logger to inspect location resolution, provider usage, failures, and mock fallbacks.
@@ -91,6 +92,9 @@ The local Swift planner remains useful as a preview/fallback experience. Product
 ### Backend API
 
 - `POST /trip-plans`: direct trip plan response.
+- `GET /trip-plans/history`: saved completed trip plans.
+- `GET /trip-plans/history/{planId}`: saved trip plan detail.
+- `GET /memory/latest`: most recent traveler memory.
 - `POST /trip-plans/runs`: starts a live agent run and returns a run snapshot.
 - `GET /trip-plans/runs/{runId}/events`: polls progress events, completion, and failure state.
 
