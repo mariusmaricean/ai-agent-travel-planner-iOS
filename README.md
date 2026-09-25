@@ -78,7 +78,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - Set `TRAVEL_PLANNER_API_BASE_URL` to use the live backend instead of the local mock planner.
 - Use `POST /trip-plans/runs` and `GET /trip-plans/runs/{runId}/events` to render live agent progress in the iOS timeline.
 - Persisted backend run snapshots let iOS keep polling after slow provider calls or backend store recreation.
-- Load `GET /trip-plans/history` and `GET /memory/latest` to restore saved trips and traveler memory from the backend.
+- Load `GET /trip-plans/history?travelerId=...` and `GET /memory/latest?travelerId=...` to restore saved trips and traveler memory from the backend.
 - The iOS client hydrates saved trips and memory from those backend endpoints on launch and from the Saved tab refresh action.
 - Configure `FLIGHT_PROVIDER=amadeus` plus Amadeus credentials to resolve and cache city names, then use real flight offers; without credentials the backend uses the mock provider.
 - Set `DESTINATION_RESEARCH_PROVIDER=open_meteo` to enrich destination research with weather context.
@@ -94,9 +94,9 @@ The local Swift planner remains useful as a preview/fallback experience. Product
 ### Backend API
 
 - `POST /trip-plans`: direct trip plan response.
-- `GET /trip-plans/history`: saved completed trip plans.
-- `GET /trip-plans/history/{planId}`: saved trip plan detail.
-- `GET /memory/latest`: most recent traveler memory.
+- `GET /trip-plans/history?travelerId=...`: saved completed trip plans for a traveler scope.
+- `GET /trip-plans/history/{planId}?travelerId=...`: saved trip plan detail for a traveler scope.
+- `GET /memory/latest?travelerId=...`: most recent traveler memory for a traveler scope.
 - `POST /trip-plans/runs`: starts a live agent run and returns a run snapshot.
 - `GET /trip-plans/runs/{runId}/events`: polls progress events, completion, and failure state.
 
@@ -104,6 +104,7 @@ Request:
 
 ```json
 {
+  "travelerId": "ios-local-device-id",
   "origin": "New York",
   "destination": "Lisbon",
   "departDate": "2026-07-11T09:00:00.000Z",

@@ -10,6 +10,7 @@ class MemoryNote(BaseModel):
 
 
 class TripPlanRequest(BaseModel):
+    travelerId: Optional[str] = None
     origin: str
     destination: str
     departDate: datetime
@@ -51,6 +52,7 @@ class TripPlanResponse(BaseModel):
 
 class SavedTripPlan(BaseModel):
     id: str
+    travelerId: str = "local"
     request: TripPlanRequest
     response: TripPlanResponse
     createdAt: datetime

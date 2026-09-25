@@ -1,6 +1,7 @@
 import Foundation
 
 struct TripPlanRequest: Encodable, Sendable {
+    var travelerId: String
     var origin: String
     var destination: String
     var departDate: String
@@ -11,7 +12,12 @@ struct TripPlanRequest: Encodable, Sendable {
     var mood: String
     var memory: [MemoryNotePayload]
 
-    init(brief: TripBrief, dateFormatter: ISO8601DateFormatter) {
+    init(
+        brief: TripBrief,
+        dateFormatter: ISO8601DateFormatter,
+        travelerId: String
+    ) {
+        self.travelerId = travelerId
         origin = brief.origin
         destination = brief.destination
         departDate = dateFormatter.string(from: brief.departDate)

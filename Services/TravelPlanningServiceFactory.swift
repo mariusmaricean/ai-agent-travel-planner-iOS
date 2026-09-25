@@ -27,3 +27,18 @@ enum TravelPlannerAPIConfiguration {
             .flatMap(URL.init(string:))
     }
 }
+
+enum TravelPlannerClientIdentity {
+    private static let storageKey = "travel-planner-traveler-id-v1"
+    static let travelerID = loadOrCreateTravelerID()
+
+    private static func loadOrCreateTravelerID() -> String {
+        if let savedID = UserDefaults.standard.string(forKey: storageKey), !savedID.isEmpty {
+            return savedID
+        }
+
+        let newID = "ios-\(UUID().uuidString.lowercased())"
+        UserDefaults.standard.set(newID, forKey: storageKey)
+        return newID
+    }
+}
