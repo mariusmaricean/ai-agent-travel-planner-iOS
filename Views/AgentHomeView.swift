@@ -67,6 +67,17 @@ struct AgentHomeView: View {
                 }
                 .background(TravelPlannerColor.paper.ignoresSafeArea())
                 .navigationTitle("Saved")
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            Task {
+                                await viewModel.refreshBackendState()
+                            }
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                    }
+                }
             }
             .tabItem {
                 Label("Saved", systemImage: "tray.full")
@@ -74,6 +85,9 @@ struct AgentHomeView: View {
             .tag(AgentTab.saved)
         }
         .tint(TravelPlannerColor.teal)
+        .task {
+            await viewModel.loadBackendStateIfNeeded()
+        }
     }
 }
 

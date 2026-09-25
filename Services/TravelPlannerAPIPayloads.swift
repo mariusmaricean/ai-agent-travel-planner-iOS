@@ -56,6 +56,15 @@ struct TripPlanRunSnapshotPayload: Decodable, Sendable {
     }
 }
 
+struct SavedTripPlanPayload: Decodable, Sendable {
+    var id: String
+    var response: TripPlanResponse
+
+    func result() -> TripPlanResult {
+        response.result()
+    }
+}
+
 struct AgentRunEventPayload: Decodable, Sendable {
     var id: Int
     var step: String

@@ -20,6 +20,7 @@ final class AgentViewModel: ObservableObject {
 
     private let planningService: TravelPlanningServicing
     private let stateStore: AgentStateStoring
+    private var didLoadBackendState = false
 
     init(
         planningService: TravelPlanningServicing = TravelPlanningServiceFactory.makeService(),
@@ -104,6 +105,30 @@ final class AgentViewModel: ObservableObject {
         }
     }
 
+    func loadBackendStateIfNeeded() async {
+        guard !didLoadBackendState else { return }
+        didLoadBackendState = true
+        await refreshBackendState()
+    }
+
+    func refreshBackendState() async {
+        do {
+            async let history = planningService.savedTripHistory(limit: 20)
+            async let latestMemory = planningService.latestMemory()
+            let (historyResults, backendMemory) = try await (history, latestMemory)
+
+            applyBackendHistory(historyResults)
+            if !backendMemory.isEmpty {
+                memory = backendMemory
+                steps = makeSteps()
+            }
+
+            save()
+        } catch {
+            return
+        }
+    }
+
     private func applyProgress(_ event: AgentRunProgressEvent) {
         guard let index = steps.firstIndex(where: { $0.key == event.step }) else { return }
 
@@ -150,6 +175,32 @@ final class AgentViewModel: ObservableObject {
 
         if let bestTrip = result.trips.first {
             updateMemory(bestTrip: bestTrip)
+        }
+    }
+
+    private func applyBackendHistory(_ results: [TripPlanResult]) {
+        let backendTrips = results.flatMap { $0.trips }
+        guard !backendTrips.isEmpty else { return }
+
+        var mergedTrips: [TripOption] = []
+        for backendTrip in backendTrips {
+            let trip = savedTrip(matching: backendTrip) ?? backendTrip
+            guard !mergedTrips.contains(where: { $0.id == trip.id || $0.matchesSavedTrip(trip) }) else { continue }
+            mergedTrips.append(trip)
+        }
+
+        for localTrip in savedTrips {
+            guard !mergedTrips.contains(where: { $0.id == localTrip.id || $0.matchesSavedTrip(localTrip) }) else { continue }
+            mergedTrips.append(localTrip)
+        }
+
+        savedTrips = mergedTrips
+        if trips.isEmpty, let latestResult = results.first {
+            trips = latestResult.trips
+        }
+
+        if activeTripID == nil {
+            activeTripID = savedTrips.first?.id ?? trips.first?.id
         }
     }
 

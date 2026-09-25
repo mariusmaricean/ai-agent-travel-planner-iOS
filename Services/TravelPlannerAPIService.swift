@@ -65,6 +65,35 @@ struct TravelPlannerAPIService: TravelPlanningServicing, Sendable {
         throw TravelPlannerAPIError.invalidResponse
     }
 
+    func savedTripHistory(limit: Int = 20) async throws -> [TripPlanResult] {
+        let endpoint = baseURL
+            .appending(path: "trip-plans")
+            .appending(path: "history")
+            .appending(queryItems: [
+                URLQueryItem(name: "limit", value: "\(limit)")
+            ])
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let data = try await responseData(for: request)
+        let payload = try JSONDecoder().decode([SavedTripPlanPayload].self, from: data)
+        return payload.map { $0.result() }
+    }
+
+    func latestMemory() async throws -> [MemoryNote] {
+        let endpoint = baseURL
+            .appending(path: "memory")
+            .appending(path: "latest")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let data = try await responseData(for: request)
+        let payload = try JSONDecoder().decode([MemoryNotePayload].self, from: data)
+        return payload.map { $0.memoryNote() }
+    }
+
     private func startRun(for brief: TripBrief) async throws -> TripPlanRunSnapshotPayload {
         let request = try makeRequest(for: brief)
         let data = try await responseData(for: request)
