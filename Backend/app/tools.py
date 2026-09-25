@@ -2318,6 +2318,18 @@ def revise_day(day: TripDay, revision_input: ItineraryRevisionInput) -> TripDay:
     if day_has_issue(day, revision_input.issues) and detail_is_overpacked(detail):
         detail = relaxed_day_detail(detail)
 
+    if day_has_issue(day, revision_input.issues) and day_has_travel_time_issue(
+        day,
+        revision_input.issues,
+    ):
+        detail = f"{detail} Add a transit buffer and keep activities in one nearby cluster."
+
+    if day_has_issue(day, revision_input.issues) and day_has_vague_plan_issue(
+        day,
+        revision_input.issues,
+    ):
+        detail = f"{detail} Anchor the day with one booked activity and one flexible backup."
+
     if should_surface_constraints(day, revision_input):
         detail = f"{detail} Constraints honored: {revision_input.request.constraints}"
 
@@ -2333,6 +2345,20 @@ def revise_day(day: TripDay, revision_input: ItineraryRevisionInput) -> TripDay:
 
 def day_has_issue(day: TripDay, issues: list[str]) -> bool:
     return any(issue.startswith(day.label) for issue in issues)
+
+
+def day_has_travel_time_issue(day: TripDay, issues: list[str]) -> bool:
+    return any(
+        issue.startswith(day.label) and "travel time" in issue.lower()
+        for issue in issues
+    )
+
+
+def day_has_vague_plan_issue(day: TripDay, issues: list[str]) -> bool:
+    return any(
+        issue.startswith(day.label) and "too vague" in issue.lower()
+        for issue in issues
+    )
 
 
 def detail_is_overpacked(detail: str) -> bool:
