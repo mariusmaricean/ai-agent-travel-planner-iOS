@@ -1,11 +1,27 @@
 import Foundation
 
+typealias TravelPlanningProgressHandler = @MainActor @Sendable (AgentRunProgressEvent) -> Void
+
 protocol TravelPlanningServicing: Sendable {
-    func makePlan(for brief: TripBrief) async throws -> TripPlanResult
+    func makePlan(
+        for brief: TripBrief,
+        progress: TravelPlanningProgressHandler?
+    ) async throws -> TripPlanResult
+}
+
+extension TravelPlanningServicing {
+    func makePlan(for brief: TripBrief) async throws -> TripPlanResult {
+        try await makePlan(for: brief, progress: nil)
+    }
 }
 
 struct MockTravelPlanningService: TravelPlanningServicing, Sendable {
-    func makePlan(for brief: TripBrief) async throws -> TripPlanResult {
+    func makePlan(
+        for brief: TripBrief,
+        progress: TravelPlanningProgressHandler?
+    ) async throws -> TripPlanResult {
+        try await emitMockProgress(for: brief, progress: progress)
+
         let route = "\(brief.origin) -> \(brief.destination)"
         let baseFare = max(320, (brief.budget * 0.42).rounded())
         let focus = brief.mood.focusItems
@@ -50,5 +66,84 @@ struct MockTravelPlanningService: TravelPlanningServicing, Sendable {
         ]
 
         return TripPlanResult(trips: trips, memory: nil)
+    }
+
+    private func emitMockProgress(
+        for brief: TripBrief,
+        progress: TravelPlanningProgressHandler?
+    ) async throws {
+        let events = [
+            AgentRunProgressEvent(
+                step: .research,
+                status: .active,
+                title: "Research destination",
+                detail: "Studying \(brief.destination) for \(brief.mood.rawValue.lowercased()) goals."
+            ),
+            AgentRunProgressEvent(
+                step: .research,
+                status: .done,
+                title: "Research destination",
+                detail: "\(brief.destination) context ready."
+            ),
+            AgentRunProgressEvent(
+                step: .flights,
+                status: .active,
+                title: "Search flights",
+                detail: "Checking \(brief.origin) to \(brief.destination) fare options."
+            ),
+            AgentRunProgressEvent(
+                step: .flights,
+                status: .done,
+                title: "Search flights",
+                detail: "Found 3 fare options."
+            ),
+            AgentRunProgressEvent(
+                step: .itinerary,
+                status: .active,
+                title: "Build itinerary",
+                detail: "Turning fare options into mobile trip cards."
+            ),
+            AgentRunProgressEvent(
+                step: .itinerary,
+                status: .done,
+                title: "Build itinerary",
+                detail: "Built 3 itinerary options."
+            ),
+            AgentRunProgressEvent(
+                step: .critic,
+                status: .active,
+                title: "Critic review",
+                detail: "Checking budget, constraints, and pacing."
+            ),
+            AgentRunProgressEvent(
+                step: .critic,
+                status: .done,
+                title: "Critic review",
+                detail: "Reviewed 3 trip options."
+            ),
+            AgentRunProgressEvent(
+                step: .revision,
+                status: .done,
+                title: "Revise if needed",
+                detail: "No revision needed."
+            ),
+            AgentRunProgressEvent(
+                step: .memory,
+                status: .active,
+                title: "Finalize memory",
+                detail: "Preparing local traveler memory updates."
+            ),
+            AgentRunProgressEvent(
+                step: .memory,
+                status: .done,
+                title: "Finalize memory",
+                detail: "Memory update ready."
+            )
+        ]
+
+        for event in events {
+            await progress?(event)
+            try await Task.sleep(for: .milliseconds(180))
+        }
     }
 }

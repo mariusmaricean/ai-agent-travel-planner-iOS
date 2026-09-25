@@ -36,6 +36,50 @@ struct TripPlanResponse: Decodable, Sendable {
     }
 }
 
+struct TripPlanRunSnapshotPayload: Decodable, Sendable {
+    var runId: String
+    var status: String
+    var events: [AgentRunEventPayload]
+    var result: TripPlanResponse?
+    var error: String?
+
+    var isRunning: Bool {
+        status == "running"
+    }
+
+    var isCompleted: Bool {
+        status == "completed"
+    }
+
+    var isFailed: Bool {
+        status == "failed"
+    }
+}
+
+struct AgentRunEventPayload: Decodable, Sendable {
+    var id: Int
+    var step: String
+    var status: String
+    var title: String
+    var detail: String
+
+    func progressEvent() -> AgentRunProgressEvent? {
+        guard
+            let step = AgentRunStep(rawValue: step),
+            let status = StepStatus(rawValue: status)
+        else {
+            return nil
+        }
+
+        return AgentRunProgressEvent(
+            step: step,
+            status: status,
+            title: title,
+            detail: detail
+        )
+    }
+}
+
 struct TripOptionPayload: Decodable, Sendable {
     var name: String
     var route: String

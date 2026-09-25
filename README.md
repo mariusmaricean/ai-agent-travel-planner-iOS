@@ -7,7 +7,7 @@ This is a SwiftUI-native travel planner that treats the iOS app as the agent cli
 - `TravelPlanner.xcodeproj`: Xcode project with a single SwiftUI iOS app target.
 - `TravelPlannerApp.swift`: SwiftUI app shell with trip brief, agent run timeline, saved trips, and local memory.
 - `Assets.xcassets/TravelPlannerHero.imageset`: generated travel visual used by the iOS hero.
-- `Backend/`: FastAPI agent runtime for the live `POST /trip-plans` endpoint.
+- `Backend/`: FastAPI agent runtime for direct trip plans and live agent run progress.
 - `AGENTS.md`: repository rules and Swift/SwiftUI guidance for AI coding assistants.
 
 ## AGENTS.md
@@ -76,6 +76,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Agent Integration Points
 - Set `TRAVEL_PLANNER_API_BASE_URL` to use the live backend instead of the local mock planner.
+- Use `POST /trip-plans/runs` and `GET /trip-plans/runs/{runId}/events` to render live agent progress in the iOS timeline.
 - Route `searchFlights(origin, destination, dates, budget)` to a flight provider function.
 - Route `researchDestination(destination, mood, constraints, memory)` to Places, Maps, Weather, or events data.
 - Route `buildItinerary(fares, constraints, memory)` to your planning/model function.
@@ -84,7 +85,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 The local Swift planner remains useful as a preview/fallback experience. Production intelligence and orchestration should stay behind the backend API.
 
-### `POST /trip-plans`
+### Backend API
+
+- `POST /trip-plans`: direct trip plan response.
+- `POST /trip-plans/runs`: starts a live agent run and returns a run snapshot.
+- `GET /trip-plans/runs/{runId}/events`: polls progress events, completion, and failure state.
 
 Request:
 
@@ -104,7 +109,7 @@ Request:
 }
 ```
 
-Response:
+Direct `POST /trip-plans` response:
 
 ```json
 {
@@ -123,5 +128,26 @@ Response:
   "memory": [
     { "title": "Last best option", "detail": "Balanced Sprint to Lisbon at $1,470." }
   ]
+}
+```
+
+Run snapshot response:
+
+```json
+{
+  "runId": "7caa0c0f-4a21-4d90-9f2c-f9c0c9d53a7d",
+  "status": "running",
+  "events": [
+    {
+      "id": 1,
+      "step": "research",
+      "status": "active",
+      "title": "Research destination",
+      "detail": "Studying Lisbon for culture goals.",
+      "createdAt": "2026-07-11T09:00:00Z"
+    }
+  ],
+  "result": null,
+  "error": null
 }
 ```

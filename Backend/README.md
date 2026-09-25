@@ -22,8 +22,13 @@ http://127.0.0.1:8000
 
 - `GET /health`
 - `POST /trip-plans`
+- `POST /trip-plans/runs`
+- `GET /trip-plans/runs/{runId}`
+- `GET /trip-plans/runs/{runId}/events`
 
 `POST /trip-plans` matches the contract documented in the root `README.md`.
+
+Use `POST /trip-plans/runs` when the client wants live progress. The response contains a `runId`, current `status`, emitted `events`, optional final `result`, and optional `error`. Poll `GET /trip-plans/runs/{runId}/events` until `status` is `completed` or `failed`.
 
 ## Agent Runtime
 
@@ -33,8 +38,8 @@ Current flow:
 
 ```text
 TripCoordinatorAgent
-  -> flight search tool
   -> DestinationResearchAgent
+  -> flight search tool
   -> ItineraryAgent
   -> ItineraryCriticAgent
   -> ItineraryAgent.revise() when rejected
@@ -49,6 +54,7 @@ Responsibilities:
 - Quality control: `ItineraryCriticAgent`, kept deterministic for fast guardrail checks.
 - Revision: a rejected itinerary is sent back through a dedicated reviser that makes concrete day-plan changes; with OpenAI enabled this is a structured model call, otherwise a deterministic fallback is used.
 - Coordination and memory: `TripCoordinatorAgent`.
+- Progress events: `TripPlanRunStore` captures coordinator events for iOS polling.
 
 The coordinator intentionally allows only one revision pass so request latency and model cost remain bounded. The revised result is critiqued once more before it is returned.
 
