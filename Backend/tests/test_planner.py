@@ -2,6 +2,8 @@ import json
 import os
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Optional
 from unittest.mock import patch
 
@@ -11,8 +13,9 @@ from app.agents import (
     ItineraryCriticAgent,
     TripCoordinatorAgent,
 )
+from app.jobs import TripPlanJobRunner
 from app.planner import create_trip_plan
-from app.runs import TripPlanRunStore
+from app.runs import INTERRUPTED_RUN_MESSAGE, TripPlanRunStore
 from app.schemas import (
     DestinationResearch,
     MemoryNote,
@@ -79,6 +82,8 @@ class TripPlannerTests(unittest.TestCase):
                 "OPEN_METEO_GEOCODING_URL",
                 "OPEN_METEO_FORECAST_URL",
                 "OPEN_METEO_TIMEOUT_SECONDS",
+                "TRIP_PLAN_RUN_STORE_PATH",
+                "TRIP_PLAN_RUN_WORKERS",
             ]
         }
 
@@ -311,6 +316,70 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(snapshot.status, "completed")
         self.assertEqual(snapshot.result, result)
         self.assertEqual([event.status for event in snapshot.events], ["active", "done"])
+
+    def test_file_backed_run_store_restores_completed_snapshot(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "runs.json"
+            store = TripPlanRunStore(path=path)
+            created = store.create()
+            result = TripPlanResponse(trips=[], memory=[])
+
+            store.emit(
+                run_id=created.runId,
+                step="research",
+                status="done",
+                title="Research destination",
+            )
+            store.complete(created.runId, result)
+
+            restored = TripPlanRunStore(path=path).snapshot(created.runId)
+
+        self.assertIsNotNone(restored)
+        assert restored is not None
+        self.assertEqual(restored.status, "completed")
+        self.assertEqual(restored.result, result)
+        self.assertEqual(restored.events[0].step, "research")
+
+    def test_file_backed_run_store_marks_running_snapshot_failed_after_restart(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "runs.json"
+            store = TripPlanRunStore(path=path)
+            created = store.create()
+            store.emit(
+                run_id=created.runId,
+                step="research",
+                status="active",
+                title="Research destination",
+            )
+
+            restored = TripPlanRunStore(path=path).snapshot(created.runId)
+
+        self.assertIsNotNone(restored)
+        assert restored is not None
+        self.assertEqual(restored.status, "failed")
+        self.assertEqual(restored.error, INTERRUPTED_RUN_MESSAGE)
+        self.assertEqual(restored.events[-1].status, "failed")
+        self.assertEqual(restored.events[-1].step, "research")
+
+    def test_trip_plan_job_runner_completes_run_snapshot(self) -> None:
+        store = TripPlanRunStore()
+        runner = TripPlanJobRunner(store=store, max_workers=1)
+        created = store.create()
+
+        try:
+            result = runner.run(created.runId, make_request())
+        finally:
+            runner.shutdown()
+
+        snapshot = store.snapshot(created.runId)
+
+        self.assertIsNotNone(result)
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot.status, "completed")
+        self.assertIsNotNone(snapshot.result)
+        self.assertEqual(snapshot.events[0].step, "research")
+        self.assertEqual(snapshot.events[-1].step, "memory")
 
     def test_rule_based_revision_rewrites_overpacked_day(self) -> None:
         request = make_request()
