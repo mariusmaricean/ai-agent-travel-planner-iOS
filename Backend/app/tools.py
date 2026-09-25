@@ -32,6 +32,14 @@ class FlightSearchQuery:
 
 
 @dataclass(frozen=True)
+class ResolvedLocation:
+    query: str
+    code: str
+    name: str
+    source: str
+
+
+@dataclass(frozen=True)
 class DestinationResearchQuery:
     origin: str
     destination: str
@@ -69,6 +77,7 @@ class ItineraryRevisionInput:
 
 
 FlightProviderFunction = Callable[[FlightSearchQuery], list[FareOption]]
+LocationResolverFunction = Callable[[str], Optional[ResolvedLocation]]
 DestinationResearchFunction = Callable[[DestinationResearchQuery], DestinationResearch]
 ItineraryPlannerFunction = Callable[[ItineraryPlanningInput], list[TripOption]]
 ItineraryReviserFunction = Callable[[ItineraryRevisionInput], TripOption]
@@ -78,18 +87,28 @@ ItineraryReviserFunction = Callable[[ItineraryRevisionInput], TripOption]
 class TravelPlanningToolRouter:
     flight_provider: FlightProviderFunction
     itinerary_planner: ItineraryPlannerFunction
+    location_resolver: Optional[LocationResolverFunction] = None
     destination_researcher: Optional[DestinationResearchFunction] = None
     itinerary_reviser: Optional[ItineraryReviserFunction] = None
 
     def search_flights(self, request: TripPlanRequest) -> list[FareOption]:
+        origin = self.resolve_location_code(request.origin)
+        destination = self.resolve_location_code(request.destination)
         query = FlightSearchQuery(
-            origin=request.origin,
-            destination=request.destination,
+            origin=origin,
+            destination=destination,
             depart_date=request.departDate,
             return_date=request.returnDate,
             budget=request.budget,
         )
         return self.flight_provider(query)
+
+    def resolve_location_code(self, value: str) -> str:
+        if self.location_resolver is None:
+            return value
+
+        resolved = self.location_resolver(value)
+        return resolved.code if resolved is not None else value
 
     def research_destination(self, request: TripPlanRequest) -> DestinationResearch:
         query = DestinationResearchQuery(
@@ -219,18 +238,64 @@ class AmadeusFlightProvider:
         return cls(config=config)
 
     def search(self, query: FlightSearchQuery) -> list[FareOption]:
-        origin = iata_location_code(query.origin)
-        destination = iata_location_code(query.destination)
+        token: str | None = None
+        origin = local_resolved_location(query.origin)
+        destination = local_resolved_location(query.destination)
+
+        if origin is None or destination is None:
+            token = self.access_token()
+
+        if origin is None and token is not None:
+            origin = self.remote_resolved_location(query.origin, token)
+
+        if destination is None and token is not None:
+            destination = self.remote_resolved_location(query.destination, token)
+
         if origin is None or destination is None:
             raise FlightProviderError("Amadeus searches require city or airport IATA codes.")
 
-        token = self.access_token()
-        payload = self.flight_offers(query, origin, destination, token)
+        token = token or self.access_token()
+        payload = self.flight_offers(query, origin.code, destination.code, token)
         fares = amadeus_fare_options(payload, self.config.currency_code)
         if not fares:
             raise FlightProviderError("Amadeus returned no flight offers.")
 
         return fares
+
+    def resolve_location(self, value: str) -> Optional[ResolvedLocation]:
+        local_location = local_resolved_location(value)
+        if local_location is not None:
+            return local_location
+
+        token = self.access_token()
+        return self.remote_resolved_location(value, token)
+
+    def remote_resolved_location(
+        self,
+        value: str,
+        token: str,
+    ) -> Optional[ResolvedLocation]:
+        keyword = amadeus_location_keyword(value)
+        if keyword is None:
+            return None
+
+        params = urllib.parse.urlencode(
+            {
+                "subType": "CITY,AIRPORT",
+                "keyword": keyword,
+                "page[limit]": 1,
+            }
+        )
+        request = urllib.request.Request(
+            url=f"{self.config.base_url.rstrip('/')}/v1/reference-data/locations?{params}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+            method="GET",
+        )
+        payload = json_response(request, self.config.timeout_seconds, "Amadeus location search")
+        return amadeus_resolved_location(payload, value)
 
     def access_token(self) -> str:
         body = urllib.parse.urlencode(
@@ -298,6 +363,29 @@ def configured_flight_provider(query: FlightSearchQuery) -> list[FareOption]:
         return mock_flight_provider(query)
 
 
+def configured_location_resolver(value: str) -> Optional[ResolvedLocation]:
+    local_location = local_resolved_location(value)
+    if local_location is not None:
+        return local_location
+
+    provider_name = os.environ.get("FLIGHT_PROVIDER", "").strip().lower()
+    if provider_name == "mock":
+        return None
+
+    provider = AmadeusFlightProvider.from_environment()
+    if provider is None:
+        return None
+
+    try:
+        return provider.resolve_location(value)
+    except FlightProviderError:
+        return None
+
+
+def resolve_location(value: str) -> Optional[ResolvedLocation]:
+    return configured_location_resolver(value)
+
+
 def json_response(
     request: urllib.request.Request,
     timeout_seconds: float,
@@ -320,6 +408,33 @@ def json_response(
         raise FlightProviderError(f"{context} did not return an object payload.")
 
     return payload
+
+
+def amadeus_resolved_location(
+    payload: dict[str, Any],
+    query: str,
+) -> Optional[ResolvedLocation]:
+    locations = payload.get("data", [])
+    if not isinstance(locations, list):
+        raise FlightProviderError("Amadeus location response did not include a data array.")
+
+    for location in locations:
+        if not isinstance(location, dict):
+            continue
+
+        code = location.get("iataCode")
+        if not isinstance(code, str) or len(code.strip()) != 3:
+            continue
+
+        name = location.get("name")
+        return ResolvedLocation(
+            query=query,
+            code=code.strip().upper(),
+            name=name if isinstance(name, str) and name else code.strip().upper(),
+            source="Amadeus Location Search",
+        )
+
+    return None
 
 
 def amadeus_fare_options(payload: dict[str, Any], currency_code: str) -> list[FareOption]:
@@ -418,11 +533,42 @@ def amadeus_carrier_codes(offer: dict[str, Any]) -> list[str]:
 
 
 def iata_location_code(value: str) -> Optional[str]:
+    location = local_resolved_location(value)
+    return location.code if location is not None else None
+
+
+def local_resolved_location(value: str) -> Optional[ResolvedLocation]:
     stripped = value.strip().upper()
     if len(stripped) == 3 and stripped.isalpha():
-        return stripped
+        return ResolvedLocation(
+            query=value,
+            code=stripped,
+            name=stripped,
+            source="IATA input",
+        )
 
-    return IATA_LOCATION_ALIASES.get(normalized_location_name(value))
+    code = IATA_LOCATION_ALIASES.get(normalized_location_name(value))
+    if code is None:
+        return None
+
+    return ResolvedLocation(
+        query=value,
+        code=code,
+        name=value.strip() or code,
+        source="local alias",
+    )
+
+
+def amadeus_location_keyword(value: str) -> Optional[str]:
+    normalized = normalized_location_name(value)
+    if not normalized:
+        return None
+
+    first_word = normalized.split()[0]
+    if len(first_word) < 2:
+        return None
+
+    return first_word[:10].upper()
 
 
 def normalized_location_name(value: str) -> str:
@@ -972,6 +1118,7 @@ def supports_reasoning(model: str) -> bool:
 default_tool_router = TravelPlanningToolRouter(
     flight_provider=configured_flight_provider,
     itinerary_planner=model_backed_itinerary_planner,
+    location_resolver=configured_location_resolver,
     destination_researcher=model_backed_destination_researcher,
     itinerary_reviser=model_backed_itinerary_reviser,
 )
