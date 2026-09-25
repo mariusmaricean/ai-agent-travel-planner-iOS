@@ -5,7 +5,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI, HTTPException, Query
 
 from app.history import TripPlanHistoryStore
-from app.jobs import TripPlanJobRunner
+from app.jobs import TripPlanJobRunner, durable_job_queue_enabled
 from app.planner import create_trip_plan
 from app.runs import TripPlanRunStore
 from app.schemas import (
@@ -19,7 +19,9 @@ from app.schemas import (
 LOGGER = logging.getLogger(__name__)
 
 history_store = TripPlanHistoryStore.from_environment()
-run_store = TripPlanRunStore.from_environment()
+run_store = TripPlanRunStore.from_environment(
+    fail_running_on_load=not durable_job_queue_enabled()
+)
 job_runner = TripPlanJobRunner.from_environment(run_store, history_store)
 
 
