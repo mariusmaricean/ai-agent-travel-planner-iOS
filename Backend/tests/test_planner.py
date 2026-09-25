@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import monotonic, sleep
 from typing import Optional
 from unittest.mock import patch
 
@@ -14,7 +15,8 @@ from app.agents import (
     TripCoordinatorAgent,
 )
 from app.history import TripPlanHistoryStore
-from app.jobs import TripPlanJobRunner
+from app.job_queue import TripPlanJobQueue
+from app.jobs import TripPlanJobRunner, durable_job_queue_enabled
 from app.planner import create_trip_plan
 from app.runs import INTERRUPTED_RUN_MESSAGE, TripPlanRunStore
 from app.schemas import (
@@ -24,6 +26,7 @@ from app.schemas import (
     TripOption,
     TripPlanRequest,
     TripPlanResponse,
+    TripPlanRunSnapshot,
 )
 from app.telemetry import capture_provider_telemetry, provider_event_title
 from app.tools import (
@@ -97,6 +100,8 @@ class TripPlannerTests(unittest.TestCase):
                 "TICKETMASTER_TIMEOUT_SECONDS",
                 "TRIP_PLAN_HISTORY_LIMIT",
                 "TRIP_PLAN_HISTORY_STORE_PATH",
+                "TRIP_PLAN_JOB_QUEUE_ENABLED",
+                "TRIP_PLAN_JOB_QUEUE_PATH",
                 "TRIP_PLAN_RUN_STORE_PATH",
                 "TRIP_PLAN_RUN_WORKERS",
             ]
@@ -376,6 +381,48 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(restored.events[-1].status, "failed")
         self.assertEqual(restored.events[-1].step, "research")
 
+    def test_file_backed_run_store_preserves_running_snapshot_for_durable_queue(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "runs.json"
+            store = TripPlanRunStore(path=path)
+            created = store.create()
+            store.emit(
+                run_id=created.runId,
+                step="research",
+                status="active",
+                title="Research destination",
+            )
+
+            restored = TripPlanRunStore(
+                path=path,
+                fail_running_on_load=False,
+            ).snapshot(created.runId)
+
+        self.assertIsNotNone(restored)
+        assert restored is not None
+        self.assertEqual(restored.status, "running")
+        self.assertIsNone(restored.error)
+        self.assertEqual(restored.events[-1].status, "active")
+
+    def test_file_backed_job_queue_requeues_running_job_after_restart(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "jobs.json"
+            queue = TripPlanJobQueue(path=path)
+            queue.enqueue("run-1", make_request())
+            running = queue.next_job()
+
+            restored_queue = TripPlanJobQueue(path=path)
+            restored = restored_queue.get("run-1")
+
+        self.assertIsNotNone(running)
+        assert running is not None
+        self.assertEqual(running.status, "running")
+        self.assertIsNotNone(restored)
+        assert restored is not None
+        self.assertEqual(restored.status, "queued")
+        self.assertEqual(restored.attempts, 1)
+        self.assertEqual(restored.lastError, "Re-queued after backend restart.")
+
     def test_file_backed_history_store_restores_saved_plan_and_memory(self) -> None:
         request = make_request()
         response = TripPlanResponse(
@@ -493,6 +540,42 @@ class TripPlannerTests(unittest.TestCase):
         self.assertIn("telemetry", [event.step for event in snapshot.events])
         self.assertEqual(len(history_store.recent()), 1)
         self.assertEqual(history_store.recent()[0].runId, created.runId)
+
+    def test_trip_plan_job_runner_processes_durable_queue(self) -> None:
+        store = TripPlanRunStore()
+        history_store = TripPlanHistoryStore()
+
+        with TemporaryDirectory() as directory:
+            queue = TripPlanJobQueue(path=Path(directory) / "jobs.json")
+            runner = TripPlanJobRunner(
+                store=store,
+                history_store=history_store,
+                max_workers=1,
+                queue=queue,
+                poll_interval_seconds=0.01,
+            )
+            created = store.create()
+
+            try:
+                runner.submit(created.runId, make_request())
+                snapshot = wait_for_run_status(store, created.runId, "completed")
+            finally:
+                runner.shutdown()
+
+            job = queue.get(created.runId)
+
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertIsNotNone(snapshot.result)
+        self.assertIsNotNone(job)
+        assert job is not None
+        self.assertEqual(job.status, "completed")
+        self.assertEqual(len(history_store.recent()), 1)
+
+    def test_durable_job_queue_can_be_disabled(self) -> None:
+        os.environ["TRIP_PLAN_JOB_QUEUE_ENABLED"] = "false"
+
+        self.assertFalse(durable_job_queue_enabled())
 
     def test_rule_based_revision_rewrites_overpacked_day(self) -> None:
         request = make_request()
@@ -1162,6 +1245,23 @@ def make_request(
         mood="Culture",
         memory=memory or [],
     )
+
+
+def wait_for_run_status(
+    store: TripPlanRunStore,
+    run_id: str,
+    status: str,
+    timeout_seconds: float = 2,
+) -> Optional[TripPlanRunSnapshot]:
+    deadline = monotonic() + timeout_seconds
+    while monotonic() < deadline:
+        snapshot = store.snapshot(run_id)
+        if snapshot is not None and snapshot.status == status:
+            return snapshot
+
+        sleep(0.01)
+
+    return store.snapshot(run_id)
 
 
 def make_planning_input() -> ItineraryPlanningInput:

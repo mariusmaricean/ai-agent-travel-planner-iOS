@@ -11,23 +11,34 @@ INTERRUPTED_RUN_MESSAGE = "Run was interrupted before completion."
 
 
 class TripPlanRunStore:
-    def __init__(self, path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        path: str | Path | None = None,
+        fail_running_on_load: bool = True,
+    ) -> None:
         self._path = Path(path) if path is not None else None
+        self._fail_running_on_load = fail_running_on_load
         self._runs: dict[str, TripPlanRunSnapshot] = {}
         self._lock = Lock()
         self._load()
 
     @classmethod
-    def from_environment(cls) -> "TripPlanRunStore":
+    def from_environment(
+        cls,
+        fail_running_on_load: bool = True,
+    ) -> "TripPlanRunStore":
         configured_path = os.environ.get("TRIP_PLAN_RUN_STORE_PATH", "").strip()
         if configured_path:
             path = Path(configured_path)
             if not path.is_absolute():
                 path = Path(__file__).resolve().parents[1] / path
 
-            return cls(path=path)
+            return cls(path=path, fail_running_on_load=fail_running_on_load)
 
-        return cls(path=Path(__file__).resolve().parents[1] / ".data" / "trip_plan_runs.json")
+        return cls(
+            path=Path(__file__).resolve().parents[1] / ".data" / "trip_plan_runs.json",
+            fail_running_on_load=fail_running_on_load,
+        )
 
     def create(self) -> TripPlanRunSnapshot:
         run_id = str(uuid4())
@@ -132,7 +143,7 @@ class TripPlanRunStore:
             except ValueError:
                 continue
 
-            if snapshot.status == "running":
+            if snapshot.status == "running" and self._fail_running_on_load:
                 snapshot = self._interrupted_snapshot(snapshot)
                 recovered_any = True
 

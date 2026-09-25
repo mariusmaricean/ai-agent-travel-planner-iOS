@@ -74,3 +74,13 @@ class TripPlanRunSnapshot(BaseModel):
     events: list[AgentRunEvent] = Field(default_factory=list)
     result: Optional[TripPlanResponse] = None
     error: Optional[str] = None
+
+
+class TripPlanJobRecord(BaseModel):
+    runId: str
+    request: TripPlanRequest
+    status: str
+    attempts: int = 0
+    createdAt: datetime
+    updatedAt: datetime
+    lastError: Optional[str] = None
