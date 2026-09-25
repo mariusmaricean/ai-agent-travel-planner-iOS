@@ -35,6 +35,9 @@ from app.tools import (
     OpenAIItineraryPlanner,
     OpenAIItineraryReviser,
     OpenAIPlannerConfig,
+    OpenMeteoDestinationResearchProvider,
+    OpenMeteoDestinationResearchProviderConfig,
+    OpenMeteoLocation,
     PROVIDER_LOGGER_NAME,
     ResolvedLocation,
     TravelPlanningToolRouter,
@@ -42,6 +45,7 @@ from app.tools import (
     amadeus_location_keyword,
     amadeus_resolved_location,
     cached_location,
+    configured_destination_research_provider,
     configured_flight_provider,
     configured_location_resolver,
     iata_location_code,
@@ -49,6 +53,8 @@ from app.tools import (
     location_resolution_cache,
     model_backed_destination_researcher,
     model_backed_itinerary_planner,
+    open_meteo_location,
+    open_meteo_weather_summary,
     rule_based_itinerary_reviser,
 )
 
@@ -69,6 +75,10 @@ class TripPlannerTests(unittest.TestCase):
                 "AMADEUS_MAX_OFFERS",
                 "AMADEUS_ADULTS",
                 "LOCATION_CACHE_MAX_ENTRIES",
+                "DESTINATION_RESEARCH_PROVIDER",
+                "OPEN_METEO_GEOCODING_URL",
+                "OPEN_METEO_FORECAST_URL",
+                "OPEN_METEO_TIMEOUT_SECONDS",
             ]
         }
 
@@ -353,6 +363,129 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(research.destination, "Lisbon")
         self.assertIn("Lisbon", research.summary)
         self.assertEqual(len(research.highlights), 3)
+
+    def test_open_meteo_location_parses_geocoding_response(self) -> None:
+        location = open_meteo_location(
+            {
+                "results": [
+                    {
+                        "name": "Lisbon",
+                        "country": "Portugal",
+                        "latitude": 38.7167,
+                        "longitude": -9.1333,
+                        "timezone": "Europe/Lisbon",
+                    }
+                ]
+            },
+            "Lisbon",
+        )
+
+        self.assertEqual(
+            location,
+            OpenMeteoLocation(
+                query="Lisbon",
+                name="Lisbon",
+                country="Portugal",
+                latitude=38.7167,
+                longitude=-9.1333,
+                timezone="Europe/Lisbon",
+            ),
+        )
+
+    def test_open_meteo_weather_summary_parses_daily_forecast(self) -> None:
+        location = OpenMeteoLocation(
+            query="Lisbon",
+            name="Lisbon",
+            country="Portugal",
+            latitude=38.7167,
+            longitude=-9.1333,
+            timezone="Europe/Lisbon",
+        )
+
+        summary = open_meteo_weather_summary(
+            {
+                "daily": {
+                    "temperature_2m_max": [24.5, 27.0],
+                    "temperature_2m_min": [15.0, 17.0],
+                    "precipitation_probability_max": [20, 55],
+                    "weather_code": [2, 61],
+                }
+            },
+            location,
+            forecast_days=2,
+        )
+
+        self.assertEqual(summary.location, location)
+        self.assertEqual(summary.min_temperature_c, 15.0)
+        self.assertEqual(summary.max_temperature_c, 27.0)
+        self.assertEqual(summary.precipitation_probability_max, 55)
+        self.assertEqual(summary.weather_code, 2)
+
+    def test_open_meteo_provider_returns_weather_research(self) -> None:
+        provider = OpenMeteoDestinationResearchProvider(
+            OpenMeteoDestinationResearchProviderConfig(
+                geocoding_url="https://geocoding.test/search",
+                forecast_url="https://forecast.test/v1",
+                timeout_seconds=3,
+            )
+        )
+
+        with patch(
+            "app.tools.json_response",
+            side_effect=[
+                {
+                    "results": [
+                        {
+                            "name": "Lisbon",
+                            "country": "Portugal",
+                            "latitude": 38.7167,
+                            "longitude": -9.1333,
+                            "timezone": "Europe/Lisbon",
+                        }
+                    ]
+                },
+                {
+                    "daily": {
+                        "temperature_2m_max": [24.5, 27.0],
+                        "temperature_2m_min": [15.0, 17.0],
+                        "precipitation_probability_max": [20, 55],
+                        "weather_code": [2, 61],
+                    }
+                },
+            ],
+        ):
+            with self.assertLogs(PROVIDER_LOGGER_NAME, level="INFO") as logs:
+                research = provider.research(make_destination_research_query())
+
+        self.assertEqual(research.destination, "Lisbon")
+        self.assertIn("Open-Meteo", research.summary)
+        self.assertIn("15-27 C", research.summary)
+        self.assertIn("Build indoor alternates", research.cautions[-1])
+        self.assertLogContains(logs, '"event": "research.open_meteo_geocode"')
+        self.assertLogContains(logs, '"event": "research.open_meteo_forecast"')
+
+    def test_configured_destination_research_provider_uses_open_meteo(self) -> None:
+        os.environ["DESTINATION_RESEARCH_PROVIDER"] = "open_meteo"
+
+        with patch(
+            "app.tools.OpenMeteoDestinationResearchProvider.research",
+            return_value=make_destination_research(),
+        ) as research:
+            result = configured_destination_research_provider(make_destination_research_query())
+
+        self.assertEqual(result, make_destination_research())
+        self.assertEqual(research.call_count, 1)
+
+    def test_model_backed_researcher_returns_provider_research_without_api_key(self) -> None:
+        os.environ["DESTINATION_RESEARCH_PROVIDER"] = "open_meteo"
+
+        with patch(
+            "app.tools.OpenMeteoDestinationResearchProvider.research",
+            return_value=make_destination_research(),
+        ):
+            research = model_backed_destination_researcher(make_destination_research_query())
+
+        self.assertEqual(research, make_destination_research())
 
     def test_configured_flight_provider_falls_back_without_amadeus_credentials(self) -> None:
         with self.assertLogs(PROVIDER_LOGGER_NAME, level="INFO") as logs:
@@ -681,7 +814,30 @@ class TripPlannerTests(unittest.TestCase):
         self.assertEqual(body["text"]["format"]["name"], "destination_research")
         self.assertTrue(body["text"]["format"]["strict"])
         self.assertEqual(prompt_payload["trip"]["destination"], "Lisbon")
+        self.assertEqual(prompt_payload["providerResearch"]["destination"], "")
         self.assertIn("Prefer experience types", prompt_payload["successCriteria"][1])
+
+    def test_openai_destination_research_prompt_includes_provider_research(self) -> None:
+        researcher = OpenAIDestinationResearcher(OpenAIPlannerConfig(api_key="test-key"))
+        query = make_destination_research_query()
+
+        body = researcher.request_body(
+            DestinationResearchQuery(
+                origin=query.origin,
+                destination=query.destination,
+                depart_date=query.depart_date,
+                return_date=query.return_date,
+                budget=query.budget,
+                mood=query.mood,
+                constraints=query.constraints,
+                memory=query.memory,
+                provider_research=make_destination_research(),
+            )
+        )
+        prompt_payload = json_from_body(body)
+
+        self.assertEqual(prompt_payload["providerResearch"]["summary"], "Lisbon culture research.")
+        self.assertEqual(prompt_payload["providerResearch"]["highlights"][0], "Tile museum")
 
     def test_openai_revision_request_body_uses_critique_context(self) -> None:
         reviser = OpenAIItineraryReviser(OpenAIPlannerConfig(api_key="test-key"))
