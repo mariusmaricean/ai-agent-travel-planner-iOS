@@ -81,10 +81,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - Load `GET /trip-plans/history?travelerId=...` and `GET /memory/latest?travelerId=...` to restore saved trips and traveler memory from the backend.
 - The iOS client hydrates saved trips and memory from those backend endpoints on launch and from the Saved tab refresh action.
 - Configure `FLIGHT_PROVIDER=amadeus` plus Amadeus credentials to resolve and cache city names, then use real flight offers; without credentials the backend uses the mock provider.
-- Set `DESTINATION_RESEARCH_PROVIDER=open_meteo` to enrich destination research with weather context.
-- Set `DESTINATION_RESEARCH_PROVIDER=ticketmaster` plus `TICKETMASTER_API_KEY` to enrich destination research with live event options.
-- Watch the backend `travel_planner.providers` logger or the iOS telemetry timeline step to inspect location resolution, provider usage, failures, and mock fallbacks.
-- Route `researchDestination(destination, mood, constraints, memory)` to Places, Maps, Weather, or events data.
+- Set `DESTINATION_RESEARCH_PROVIDER` to one provider or a comma-separated list such as `open_meteo,ticketmaster,osm_places,local_transport,budget`.
+- Use `open_meteo`, `ticketmaster`, and `osm_places` for live weather, events, and place candidates; use `local_transport` and `budget` for deterministic planning context.
+- Watch the backend `travel_planner.providers` logger or the iOS telemetry timeline step to inspect location resolution, provider usage, failures, place results, and mock fallbacks.
 - Route `buildItinerary(fares, constraints, memory)` to your planning/model function.
 - Route rejected plans through the backend itinerary reviser so the critic feedback changes the itinerary content.
 - Return updated `memory` from the backend, or omit it to keep the local memory update.

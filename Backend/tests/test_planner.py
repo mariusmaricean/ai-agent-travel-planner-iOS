@@ -46,6 +46,9 @@ from app.tools import (
     OpenMeteoDestinationResearchProvider,
     OpenMeteoDestinationResearchProviderConfig,
     OpenMeteoLocation,
+    OpenStreetMapPlace,
+    OpenStreetMapPlacesProvider,
+    OpenStreetMapPlacesProviderConfig,
     PROVIDER_LOGGER_NAME,
     ResolvedLocation,
     TicketmasterEvent,
@@ -65,6 +68,7 @@ from app.tools import (
     location_resolution_cache,
     model_backed_destination_researcher,
     model_backed_itinerary_planner,
+    osm_places,
     open_meteo_location,
     open_meteo_weather_summary,
     rule_based_itinerary_reviser,
@@ -98,6 +102,10 @@ class TripPlannerTests(unittest.TestCase):
                 "TICKETMASTER_EVENTS_URL",
                 "TICKETMASTER_MAX_EVENTS",
                 "TICKETMASTER_TIMEOUT_SECONDS",
+                "OSM_PLACES_SEARCH_URL",
+                "OSM_MAX_PLACES",
+                "OSM_TIMEOUT_SECONDS",
+                "OSM_USER_AGENT",
                 "TRIP_PLAN_HISTORY_LIMIT",
                 "TRIP_PLAN_HISTORY_STORE_PATH",
                 "TRIP_PLAN_JOB_QUEUE_ENABLED",
@@ -766,6 +774,41 @@ class TripPlannerTests(unittest.TestCase):
         self.assertLogContains(logs, '"event": "research.ticketmaster_events"')
         self.assertLogContains(logs, '"event_count": 1')
 
+    def test_osm_places_parse_place_response(self) -> None:
+        places = osm_places(osm_places_payload())
+
+        self.assertEqual(
+            places,
+            [
+                OpenStreetMapPlace(
+                    name="Museu Nacional do Azulejo",
+                    category="museum",
+                    display_name="Museu Nacional do Azulejo, Lisbon, Portugal",
+                )
+            ],
+        )
+
+    def test_osm_places_provider_returns_place_research(self) -> None:
+        provider = OpenStreetMapPlacesProvider(
+            OpenStreetMapPlacesProviderConfig(
+                search_url="https://nominatim.test/search",
+                timeout_seconds=3,
+                max_places=2,
+                user_agent="TravelPlannerTests/1.0",
+            )
+        )
+
+        with patch("app.tools.json_response", return_value=osm_places_payload()):
+            with self.assertLogs(PROVIDER_LOGGER_NAME, level="INFO") as logs:
+                research = provider.research(make_destination_research_query())
+
+        self.assertEqual(research.destination, "Lisbon")
+        self.assertIn("OpenStreetMap", research.summary)
+        self.assertIn("Museu Nacional do Azulejo", research.highlights[0])
+        self.assertIn("Verify opening hours", research.cautions[-2])
+        self.assertLogContains(logs, '"event": "research.osm_places"')
+        self.assertLogContains(logs, '"place_count": 1')
+
     def test_configured_destination_research_provider_uses_ticketmaster(self) -> None:
         os.environ["DESTINATION_RESEARCH_PROVIDER"] = "ticketmaster"
         os.environ["TICKETMASTER_API_KEY"] = "test-key"
@@ -800,6 +843,12 @@ class TripPlannerTests(unittest.TestCase):
             "Event provider results",
         )
 
+    def test_provider_telemetry_title_includes_osm_places(self) -> None:
+        self.assertEqual(
+            provider_event_title({"event": "research.osm_places"}),
+            "Place provider results",
+        )
+
     def test_configured_destination_research_provider_uses_open_meteo(self) -> None:
         os.environ["DESTINATION_RESEARCH_PROVIDER"] = "open_meteo"
 
@@ -811,6 +860,17 @@ class TripPlannerTests(unittest.TestCase):
 
         self.assertEqual(result, make_destination_research())
         self.assertEqual(research.call_count, 1)
+
+    def test_configured_destination_research_provider_merges_multiple_sources(self) -> None:
+        os.environ["DESTINATION_RESEARCH_PROVIDER"] = "local_transport,budget"
+
+        result = configured_destination_research_provider(make_destination_research_query())
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertIn("combines 2 sources", result.summary)
+        self.assertIn("Plan activities by neighborhood", result.highlights[0])
+        self.assertIn("Daily planning target", result.highlights[3])
 
     def test_model_backed_researcher_returns_provider_research_without_api_key(self) -> None:
         os.environ["DESTINATION_RESEARCH_PROVIDER"] = "open_meteo"
@@ -1354,6 +1414,16 @@ def ticketmaster_events_payload() -> dict:
             ]
         }
     }
+
+
+def osm_places_payload() -> list[dict]:
+    return [
+        {
+            "name": "Museu Nacional do Azulejo",
+            "type": "museum",
+            "display_name": "Museu Nacional do Azulejo, Lisbon, Portugal",
+        }
+    ]
 
 
 def json_from_body(body: dict) -> dict:

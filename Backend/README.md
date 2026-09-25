@@ -105,7 +105,9 @@ Optional environment variables:
 
 ## Destination Research Provider
 
-Set `DESTINATION_RESEARCH_PROVIDER=open_meteo` to add real destination weather context from Open-Meteo before itinerary planning. The provider geocodes the destination, fetches a short daily forecast, and turns that into highlights, cautions, and local tips. If the provider is disabled or fails, the backend falls back to model-backed or deterministic research.
+Set `DESTINATION_RESEARCH_PROVIDER` to one provider or a comma-separated list. The backend merges successful provider results into one destination research context before itinerary planning. Supported values include `open_meteo`, `ticketmaster`, `osm_places`, `local_transport`, and `budget`. Use `real` for weather, events, and OSM places, or `all` for every provider. If every configured provider is disabled or fails, the backend falls back to model-backed or deterministic research.
+
+Set `DESTINATION_RESEARCH_PROVIDER=open_meteo` to add real destination weather context from Open-Meteo before itinerary planning. The provider geocodes the destination, fetches a short daily forecast, and turns that into highlights, cautions, and local tips.
 
 ```text
 DESTINATION_RESEARCH_PROVIDER=open_meteo
@@ -127,6 +129,22 @@ TICKETMASTER_MAX_EVENTS=3
 TICKETMASTER_COUNTRY_CODE=
 ```
 
+Set `DESTINATION_RESEARCH_PROVIDER=osm_places` to add OpenStreetMap place candidates through Nominatim. The public Nominatim service requires a valid identifying `User-Agent` and light usage, so keep this provider server-side and configure a real app identifier before production.
+
+```text
+DESTINATION_RESEARCH_PROVIDER=osm_places
+OSM_PLACES_SEARCH_URL=https://nominatim.openstreetmap.org/search
+OSM_TIMEOUT_SECONDS=12
+OSM_MAX_PLACES=3
+OSM_USER_AGENT="TravelPlannerAgent/1.0 (https://github.com/mariusmaricean/ai-agent-travel-planner-iOS)"
+```
+
+For local deterministic enrichment without external API calls, use `local_transport`, `budget`, or both:
+
+```text
+DESTINATION_RESEARCH_PROVIDER=local_transport,budget
+```
+
 ## Flight Provider
 
 The backend can call Amadeus Self-Service Flight Offers Search when credentials are configured. Without credentials, or when `FLIGHT_PROVIDER=mock`, it keeps using the local mock fare provider.
@@ -145,7 +163,7 @@ PROVIDER_LOG_LEVEL=INFO
 
 The provider accepts three-letter IATA city or airport codes directly. It resolves city names through Amadeus Airport & City Search when Amadeus credentials are configured, with a small local alias table for common demo names such as New York, Lisbon, Copenhagen, and Cluj-Napoca. Successful resolutions are cached in memory per backend process.
 
-Provider decisions are logged through the `travel_planner.providers` logger as `provider_event` records. Current events cover local aliases, IATA input, cache hits/stores, Amadeus location lookups, Amadeus flight offers, Open-Meteo weather calls, Ticketmaster event calls, provider failures, and mock fallbacks. Live runs also copy those records into `telemetry` progress events so the iOS timeline can display provider decisions while polling.
+Provider decisions are logged through the `travel_planner.providers` logger as `provider_event` records. Current events cover local aliases, IATA input, cache hits/stores, Amadeus location lookups, Amadeus flight offers, Open-Meteo weather calls, Ticketmaster event calls, OpenStreetMap place calls, provider failures, and mock fallbacks. Live runs also copy those records into `telemetry` progress events so the iOS timeline can display provider decisions while polling.
 
 ## Next Integration Points
 
