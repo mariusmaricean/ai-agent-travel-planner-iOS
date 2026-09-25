@@ -101,11 +101,12 @@ AMADEUS_BASE_URL=https://test.api.amadeus.com
 AMADEUS_CURRENCY_CODE=USD
 AMADEUS_MAX_OFFERS=3
 AMADEUS_ADULTS=1
+LOCATION_CACHE_MAX_ENTRIES=128
 ```
 
-The provider accepts three-letter IATA city or airport codes directly. It resolves city names through Amadeus Airport & City Search when Amadeus credentials are configured, with a small local alias table for common demo names such as New York, Lisbon, Copenhagen, and Cluj-Napoca.
+The provider accepts three-letter IATA city or airport codes directly. It resolves city names through Amadeus Airport & City Search when Amadeus credentials are configured, with a small local alias table for common demo names such as New York, Lisbon, Copenhagen, and Cluj-Napoca. Successful resolutions are cached in memory per backend process.
 
 ## Next Integration Points
 
-- Cache resolved locations so repeated searches avoid extra provider calls.
+- Add provider telemetry so resolved locations, mock fallbacks, and provider failures are visible in logs.
 - Move long-running work into a job or workflow if provider calls become slow.
