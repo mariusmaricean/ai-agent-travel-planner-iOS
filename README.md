@@ -78,6 +78,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - Set `TRAVEL_PLANNER_API_BASE_URL` to use the live backend instead of the local mock planner.
 - Use `POST /trip-plans/runs` and `GET /trip-plans/runs/{runId}/events` to render live agent progress in the iOS timeline.
 - Persisted backend run snapshots and queued jobs let iOS keep polling after slow provider calls or backend store recreation.
+- Use `POST /auth/register`, `POST /auth/login`, and bearer tokens to bind saved trips and memory to a backend user account.
 - Load `GET /trip-plans/history?travelerId=...` and `GET /memory/latest?travelerId=...` to restore saved trips and traveler memory from the backend.
 - The iOS client hydrates saved trips and memory from those backend endpoints on launch and from the Saved tab refresh action.
 - Configure `FLIGHT_PROVIDER=amadeus` plus Amadeus credentials to resolve and cache city names, then use real flight offers; without credentials the backend uses the mock provider.
@@ -100,11 +101,16 @@ Scripts/ci.sh
 
 - `POST /trip-plans`: direct trip plan response.
 - `GET /config/status`: non-secret backend configuration health and provider warnings.
+- `POST /auth/register`: creates an account and returns a bearer session.
+- `POST /auth/login`: returns a bearer session for an existing account.
+- `GET /auth/me`: returns the current authenticated account.
 - `GET /trip-plans/history?travelerId=...`: saved completed trip plans for a traveler scope.
 - `GET /trip-plans/history/{planId}?travelerId=...`: saved trip plan detail for a traveler scope.
 - `GET /memory/latest?travelerId=...`: most recent traveler memory for a traveler scope.
 - `POST /trip-plans/runs`: starts a live agent run and returns a run snapshot.
 - `GET /trip-plans/runs/{runId}/events`: polls progress events, completion, and failure state.
+
+When the iOS app has a bearer token, the backend uses the authenticated account as the traveler scope for trip plans, saved history, and memory. Without a token, the app falls back to the local device `travelerId`.
 
 Request:
 

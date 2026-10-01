@@ -83,6 +83,22 @@ struct AgentHomeView: View {
                 Label("Saved", systemImage: "tray.full")
             }
             .tag(AgentTab.saved)
+
+            NavigationStack {
+                ScrollView {
+                    VStack(spacing: 16) {
+                        AccountView(viewModel: viewModel)
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .top)
+                }
+                .background(TravelPlannerColor.paper.ignoresSafeArea())
+                .navigationTitle("Account")
+            }
+            .tabItem {
+                Label("Account", systemImage: "person.crop.circle")
+            }
+            .tag(AgentTab.account)
         }
         .tint(TravelPlannerColor.teal)
         .task {
@@ -95,4 +111,5 @@ enum AgentTab {
     case brief
     case run
     case saved
+    case account
 }

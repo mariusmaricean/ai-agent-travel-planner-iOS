@@ -22,6 +22,9 @@ http://127.0.0.1:8000
 
 - `GET /health`
 - `GET /config/status`
+- `POST /auth/register`
+- `POST /auth/login`
+- `GET /auth/me`
 - `POST /trip-plans`
 - `GET /trip-plans/history`
 - `GET /trip-plans/history/{planId}`
@@ -39,6 +42,8 @@ Use `POST /trip-plans/runs` when the client wants live progress. The response co
 Run snapshots and queued jobs are persisted to disk so polling state survives store recreation and backend restarts. With the durable job queue enabled, work is enqueued first and worker threads drain persisted jobs in the background. Jobs that were `running` during startup are moved back to `queued` and retried.
 
 Completed trip plans are also persisted to disk. Include `travelerId` in trip plan requests, then use `GET /trip-plans/history?travelerId=...` to list saved plans, `GET /trip-plans/history/{planId}?travelerId=...` to fetch one saved response, and `GET /memory/latest?travelerId=...` to hydrate the client with the most recent traveler memory for that traveler scope. Requests without a traveler ID use the local default scope.
+
+User accounts are available through `POST /auth/register`, `POST /auth/login`, and `GET /auth/me`. Auth endpoints return bearer sessions. When a request includes `Authorization: Bearer <token>`, the backend scopes direct trip plans, live trip runs, saved history, and latest memory to the authenticated account instead of the client-provided `travelerId`.
 
 ## Agent Runtime
 
@@ -105,6 +110,7 @@ Optional environment variables:
 - `TRIP_PLAN_JOB_QUEUE_PATH`: defaults to `Backend/.data/trip_plan_jobs.json`; relative paths are resolved from the `Backend` directory.
 - `TRIP_PLAN_HISTORY_STORE_PATH`: defaults to `Backend/.data/trip_plan_history.json`; relative paths are resolved from the `Backend` directory.
 - `TRIP_PLAN_HISTORY_LIMIT`: defaults to `100`.
+- `USER_ACCOUNT_STORE_PATH`: defaults to `Backend/.data/user_accounts.json`; relative paths are resolved from the `Backend` directory.
 
 API requests are logged as structured `travel_planner.api` records with method, path, status, and duration. Provider decisions continue to use the `travel_planner.providers` logger.
 
@@ -172,5 +178,5 @@ Provider decisions are logged through the `travel_planner.providers` logger as `
 
 ## Next Integration Points
 
-- Promote device-scoped traveler IDs to authenticated user identity before production.
+- Replace the local account store with your production identity provider before multi-device release.
 - Replace the local durable job queue with an external queue or workflow worker before multi-instance deployment.

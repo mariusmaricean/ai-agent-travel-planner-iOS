@@ -30,7 +30,25 @@ enum TravelPlannerAPIConfiguration {
 
 enum TravelPlannerClientIdentity {
     private static let storageKey = "travel-planner-traveler-id-v1"
+    private static let accountSessionKey = "travel-planner-account-session-v1"
     static let travelerID = loadOrCreateTravelerID()
+
+    static func currentAccountSession() -> TravelPlannerAccountSession? {
+        guard let data = UserDefaults.standard.data(forKey: accountSessionKey) else {
+            return nil
+        }
+
+        return try? JSONDecoder().decode(TravelPlannerAccountSession.self, from: data)
+    }
+
+    static func saveAccountSession(_ session: TravelPlannerAccountSession) {
+        guard let data = try? JSONEncoder().encode(session) else { return }
+        UserDefaults.standard.set(data, forKey: accountSessionKey)
+    }
+
+    static func clearAccountSession() {
+        UserDefaults.standard.removeObject(forKey: accountSessionKey)
+    }
 
     private static func loadOrCreateTravelerID() -> String {
         if let savedID = UserDefaults.standard.string(forKey: storageKey), !savedID.isEmpty {

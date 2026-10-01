@@ -60,6 +60,30 @@ class TripPlanResponse(BaseModel):
     memory: Optional[list[MemoryNote]] = None
 
 
+class AccountRegistrationRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=8, max_length=128)
+    displayName: Optional[str] = Field(default=None, max_length=80)
+
+
+class AccountLoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=8, max_length=128)
+
+
+class AuthenticatedUser(BaseModel):
+    id: str
+    email: str
+    displayName: Optional[str] = None
+    travelerId: str
+
+
+class AccountSessionResponse(BaseModel):
+    accessToken: str
+    tokenType: str = "bearer"
+    user: AuthenticatedUser
+
+
 class SavedTripPlan(BaseModel):
     id: str
     travelerId: str = "local"

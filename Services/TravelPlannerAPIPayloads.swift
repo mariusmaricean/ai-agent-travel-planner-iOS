@@ -30,6 +30,12 @@ struct TripPlanRequest: Encodable, Sendable {
     }
 }
 
+struct AccountCredentialsRequest: Encodable, Sendable {
+    var email: String
+    var password: String
+    var displayName: String?
+}
+
 struct TripPlanResponse: Decodable, Sendable {
     var trips: [TripOptionPayload]
     var memory: [MemoryNotePayload]?

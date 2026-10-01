@@ -13,6 +13,13 @@ def backend_configuration_status() -> dict[str, Any]:
             "durableJobQueue": durable_job_queue_enabled(),
             "modelBackedPlanning": bool(os.environ.get("OPENAI_API_KEY", "").strip()),
         },
+        "auth": {
+            "userAccounts": True,
+            "accountStore": os.environ.get(
+                "USER_ACCOUNT_STORE_PATH",
+                "Backend/.data/user_accounts.json",
+            ),
+        },
     }
 
 
