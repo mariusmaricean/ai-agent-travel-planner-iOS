@@ -1,6 +1,6 @@
 # Travel Planner for iOS
 
-This is a SwiftUI-native travel planner that treats the iOS app as the agent client and the Python backend as the agent runtime.
+This is a SwiftUI autonomous AI travel planner that treats the iOS app as the agent client and the Python backend as the agent runtime.
 
 ## Files
 
