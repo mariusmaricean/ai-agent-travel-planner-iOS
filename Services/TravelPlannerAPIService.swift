@@ -78,7 +78,7 @@ struct TravelPlannerAPIService: TravelPlanningServicing, Sendable {
             ])
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        applyDefaultHeaders(to: &request)
 
         let data = try await responseData(for: request)
         let payload = try JSONDecoder().decode([SavedTripPlanPayload].self, from: data)
@@ -94,11 +94,36 @@ struct TravelPlannerAPIService: TravelPlanningServicing, Sendable {
             ])
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        applyDefaultHeaders(to: &request)
 
         let data = try await responseData(for: request)
         let payload = try JSONDecoder().decode([MemoryNotePayload].self, from: data)
         return payload.map { $0.memoryNote() }
+    }
+
+    func registerAccount(
+        email: String,
+        password: String,
+        displayName: String
+    ) async throws -> TravelPlannerAccountSession {
+        try await accountSession(
+            path: "register",
+            email: email,
+            password: password,
+            displayName: displayName
+        )
+    }
+
+    func loginAccount(
+        email: String,
+        password: String
+    ) async throws -> TravelPlannerAccountSession {
+        try await accountSession(
+            path: "login",
+            email: email,
+            password: password,
+            displayName: nil
+        )
     }
 
     private func startRun(for brief: TripBrief) async throws -> TripPlanRunSnapshotPayload {
@@ -115,7 +140,7 @@ struct TravelPlannerAPIService: TravelPlanningServicing, Sendable {
             .appending(path: "events")
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        applyDefaultHeaders(to: &request)
 
         let data = try await responseData(for: request)
         return try JSONDecoder().decode(TripPlanRunSnapshotPayload.self, from: data)
@@ -161,7 +186,7 @@ struct TravelPlannerAPIService: TravelPlanningServicing, Sendable {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        applyDefaultHeaders(to: &request)
         request.httpBody = try JSONEncoder().encode(
             TripPlanRequest(
                 brief: brief,
@@ -170,5 +195,48 @@ struct TravelPlannerAPIService: TravelPlanningServicing, Sendable {
             )
         )
         return request
+    }
+
+    private func accountSession(
+        path: String,
+        email: String,
+        password: String,
+        displayName: String?
+    ) async throws -> TravelPlannerAccountSession {
+        let endpoint = baseURL
+            .appending(path: "auth")
+            .appending(path: path)
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        applyDefaultHeaders(to: &request)
+        request.httpBody = try JSONEncoder().encode(
+            AccountCredentialsRequest(
+                email: email,
+                password: password,
+                displayName: displayName
+            )
+        )
+
+        let data = try await responseData(for: request)
+        let accountSession = try JSONDecoder().decode(
+            TravelPlannerAccountSession.self,
+            from: data
+        )
+        TravelPlannerClientIdentity.saveAccountSession(accountSession)
+        return accountSession
+    }
+
+    private func applyDefaultHeaders(to request: inout URLRequest) {
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        guard let accountSession = TravelPlannerClientIdentity.currentAccountSession() else {
+            return
+        }
+
+        request.setValue(
+            accountSession.authorizationHeader,
+            forHTTPHeaderField: "Authorization"
+        )
     }
 }

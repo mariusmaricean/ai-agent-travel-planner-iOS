@@ -78,6 +78,11 @@ from app.tools import (
     ticketmaster_datetime,
     ticketmaster_events,
 )
+from app.users import (
+    InvalidCredentialsError,
+    UserAccountStore,
+    UserAlreadyExistsError,
+)
 
 
 class TripPlannerTests(unittest.TestCase):
@@ -115,6 +120,7 @@ class TripPlannerTests(unittest.TestCase):
                 "TRIP_PLAN_JOB_QUEUE_PATH",
                 "TRIP_PLAN_RUN_STORE_PATH",
                 "TRIP_PLAN_RUN_WORKERS",
+                "USER_ACCOUNT_STORE_PATH",
             ]
         }
 
@@ -629,6 +635,58 @@ class TripPlannerTests(unittest.TestCase):
             restored_store.latest_memory(traveler_id="traveler-b"),
             second_memory,
         )
+
+    def test_user_account_store_persists_users_and_sessions(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "users.json"
+            store = UserAccountStore(path=path)
+
+            session = store.register(
+                email="Marius@example.com",
+                password="correct-horse-battery",
+                display_name="Marius",
+            )
+            restored_store = UserAccountStore(path=path)
+            restored_user = restored_store.authenticate(session.accessToken)
+            login_session = restored_store.login(
+                email="marius@example.com",
+                password="correct-horse-battery",
+            )
+
+        self.assertEqual(session.user.email, "marius@example.com")
+        self.assertEqual(session.user.displayName, "Marius")
+        self.assertTrue(session.user.travelerId.startswith("user:"))
+        self.assertIsNotNone(restored_user)
+        assert restored_user is not None
+        self.assertEqual(restored_user.id, session.user.id)
+        self.assertEqual(login_session.user.id, session.user.id)
+        self.assertNotEqual(login_session.accessToken, session.accessToken)
+
+    def test_user_account_store_rejects_duplicate_accounts(self) -> None:
+        store = UserAccountStore()
+        store.register(
+            email="marius@example.com",
+            password="correct-horse-battery",
+        )
+
+        with self.assertRaises(UserAlreadyExistsError):
+            store.register(
+                email="MARIUS@example.com",
+                password="another-password",
+            )
+
+    def test_user_account_store_rejects_invalid_credentials(self) -> None:
+        store = UserAccountStore()
+        store.register(
+            email="marius@example.com",
+            password="correct-horse-battery",
+        )
+
+        with self.assertRaises(InvalidCredentialsError):
+            store.login(
+                email="marius@example.com",
+                password="wrong-password",
+            )
 
     def test_provider_telemetry_handler_emits_run_events(self) -> None:
         store = TripPlanRunStore()

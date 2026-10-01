@@ -17,6 +17,12 @@ final class AgentViewModel: ObservableObject {
     @Published var savedTrips: [TripOption] = []
     @Published var memory: [MemoryNote] = []
     @Published var activeTripID: UUID?
+    @Published var accountEmail = ""
+    @Published var accountPassword = ""
+    @Published var accountDisplayName = ""
+    @Published private(set) var accountSession: TravelPlannerAccountSession?
+    @Published private(set) var accountMessage: String?
+    @Published private(set) var isAuthenticating = false
 
     private let planningService: TravelPlanningServicing
     private let stateStore: AgentStateStoring
@@ -29,6 +35,9 @@ final class AgentViewModel: ObservableObject {
         self.planningService = planningService
         self.stateStore = stateStore
         load()
+        accountSession = planningService.currentAccountSession()
+        accountEmail = accountSession?.user.email ?? ""
+        accountDisplayName = accountSession?.user.displayName ?? ""
         steps = makeSteps()
     }
 
@@ -68,6 +77,18 @@ final class AgentViewModel: ObservableObject {
         runState.errorMessage
     }
 
+    var accountTitle: String {
+        accountSession?.user.displayTitle ?? "Local traveler"
+    }
+
+    var accountSubtitle: String {
+        accountSession?.user.email ?? "Saved trips use this device until you sign in"
+    }
+
+    var isSignedIn: Bool {
+        accountSession != nil
+    }
+
     var currentBrief: TripBrief {
         TripBrief(
             origin: origin,
@@ -105,6 +126,29 @@ final class AgentViewModel: ObservableObject {
         }
     }
 
+    func registerAccount() async {
+        await authenticateAccount(isRegistration: true)
+    }
+
+    func loginAccount() async {
+        await authenticateAccount(isRegistration: false)
+    }
+
+    func signOutAccount() {
+        planningService.signOutAccount()
+        accountSession = nil
+        accountPassword = ""
+        accountMessage = "Signed out."
+        didLoadBackendState = false
+        savedTrips = []
+        memory = []
+        trips = []
+        activeTripID = nil
+        runState = .idle
+        steps = makeSteps()
+        stateStore.clear()
+    }
+
     func loadBackendStateIfNeeded() async {
         guard !didLoadBackendState else { return }
         didLoadBackendState = true
@@ -126,6 +170,52 @@ final class AgentViewModel: ObservableObject {
             save()
         } catch {
             return
+        }
+    }
+
+    private func authenticateAccount(isRegistration: Bool) async {
+        let email = accountEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = accountDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !email.isEmpty, !accountPassword.isEmpty else {
+            accountMessage = "Enter an email and password."
+            return
+        }
+
+        guard accountPassword.count >= 8 else {
+            accountMessage = "Password must be at least 8 characters."
+            return
+        }
+
+        isAuthenticating = true
+        accountMessage = nil
+        defer {
+            isAuthenticating = false
+        }
+
+        do {
+            let session = if isRegistration {
+                try await planningService.registerAccount(
+                    email: email,
+                    password: accountPassword,
+                    displayName: displayName
+                )
+            } else {
+                try await planningService.loginAccount(
+                    email: email,
+                    password: accountPassword
+                )
+            }
+
+            accountSession = session
+            accountEmail = session.user.email
+            accountDisplayName = session.user.displayName ?? ""
+            accountPassword = ""
+            accountMessage = isRegistration ? "Account created." : "Signed in."
+            didLoadBackendState = false
+            await refreshBackendState()
+        } catch {
+            accountMessage = error.localizedDescription
         }
     }
 

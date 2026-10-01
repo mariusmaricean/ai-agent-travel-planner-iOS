@@ -11,6 +11,21 @@ protocol TravelPlanningServicing: Sendable {
     func savedTripHistory(limit: Int) async throws -> [TripPlanResult]
 
     func latestMemory() async throws -> [MemoryNote]
+
+    func registerAccount(
+        email: String,
+        password: String,
+        displayName: String
+    ) async throws -> TravelPlannerAccountSession
+
+    func loginAccount(
+        email: String,
+        password: String
+    ) async throws -> TravelPlannerAccountSession
+
+    func currentAccountSession() -> TravelPlannerAccountSession?
+
+    func signOutAccount()
 }
 
 extension TravelPlanningServicing {
@@ -24,6 +39,29 @@ extension TravelPlanningServicing {
 
     func latestMemory() async throws -> [MemoryNote] {
         []
+    }
+
+    func registerAccount(
+        email: String,
+        password: String,
+        displayName: String
+    ) async throws -> TravelPlannerAccountSession {
+        throw TravelPlannerAPIError.emptyBaseURL
+    }
+
+    func loginAccount(
+        email: String,
+        password: String
+    ) async throws -> TravelPlannerAccountSession {
+        throw TravelPlannerAPIError.emptyBaseURL
+    }
+
+    func currentAccountSession() -> TravelPlannerAccountSession? {
+        TravelPlannerClientIdentity.currentAccountSession()
+    }
+
+    func signOutAccount() {
+        TravelPlannerClientIdentity.clearAccountSession()
     }
 }
 
